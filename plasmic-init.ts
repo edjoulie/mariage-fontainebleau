@@ -1,4 +1,11 @@
 import { initPlasmicLoader } from "@plasmicapp/loader-nextjs";
+import { registerComponent } from "@plasmicapp/host";
+import LodgingCards from "@/components/LodgingCards";
+
+registerComponent(LodgingCards, {
+  name: "LodgingCards",
+  props: {},
+});
 
 export const PLASMIC = initPlasmicLoader({
   projects: [
