@@ -1,12 +1,13 @@
 import { initPlasmicLoader } from "@plasmicapp/loader-nextjs";
 import { registerComponent } from "@plasmicapp/host";
-import LodgingCards from "@/components/LodgingCards";
+import LodgingCards from "./components/LodgingCards"; // <-- chemin relatif
 
 registerComponent(LodgingCards, {
   name: "LodgingCards",
+  importPath: "./components/LodgingCards", // <-- requis par ta version
+  // importName n’est pas nécessaire car export default
   props: {},
 });
-
 
 export const PLASMIC = initPlasmicLoader({
   projects: [
