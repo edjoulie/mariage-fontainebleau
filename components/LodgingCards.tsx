@@ -1,5 +1,4 @@
 import React from "react";
-import { motion } from "framer-motion";
 
 // 🧩 Composant prêt à enregistrer comme Code Component dans Plasmic
 // - Affiche des cartes cliquables avec nom, type, distance, ville et bouton "Voir"
@@ -69,12 +68,11 @@ export default function LodgingCards() {
   ];
 
   const Card: React.FC<{ it: (typeof items)[number] }> = ({ it }) => (
-    <motion.a
+    <a
       href={normalizeUrl(it.url)}
       target="_blank"
       rel="noopener noreferrer"
       className="group block rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-indigo-500"
-      whileHover={{ y: -2 }}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -99,7 +97,7 @@ export default function LodgingCards() {
           Voir
         </button>
       </div>
-    </motion.a>
+    </a>
   );
 
   return (
@@ -130,4 +128,3 @@ export default function LodgingCards() {
     </section>
   );
 }
-
