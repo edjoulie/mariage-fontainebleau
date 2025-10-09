@@ -7,6 +7,7 @@ registerComponent(LodgingCards, {
   props: {},
 });
 
+
 export const PLASMIC = initPlasmicLoader({
   projects: [
     {
