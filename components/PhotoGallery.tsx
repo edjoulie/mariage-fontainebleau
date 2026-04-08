@@ -18,6 +18,13 @@ const BTN_BG = "#41611D";
 // ─── Config ───
 const PER_PAGE_OPTIONS = [12, 24, 48];
 
+type GridSize = "large" | "medium" | "small";
+const GRID_SIZES: { key: GridSize; label: string }[] = [
+  { key: "large", label: "Grande" },
+  { key: "medium", label: "Moyenne" },
+  { key: "small", label: "Vignettes" },
+];
+
 // ─── Types ───
 interface CloudinaryResource {
   public_id: string;
@@ -200,6 +207,7 @@ function Gallery() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
+  const [gridSize, setGridSize] = useState<GridSize>("large");
   const scriptLoaded = useRef(false);
 
   const totalPages = Math.ceil(photos.length / perPage);
@@ -227,8 +235,14 @@ function Gallery() {
       const style = document.createElement("style");
       style.id = "pg-styles";
       style.textContent = `
-        .${GRID_CLASS} { grid-template-columns: repeat(2, 1fr); }
-        @media (min-width: 640px) { .${GRID_CLASS} { grid-template-columns: repeat(3, 1fr); } }
+        .${GRID_CLASS}.pg-large { grid-template-columns: repeat(2, 1fr); }
+        .${GRID_CLASS}.pg-medium { grid-template-columns: repeat(3, 1fr); }
+        .${GRID_CLASS}.pg-small { grid-template-columns: repeat(4, 1fr); }
+        @media (min-width: 640px) {
+          .${GRID_CLASS}.pg-large { grid-template-columns: repeat(3, 1fr); }
+          .${GRID_CLASS}.pg-medium { grid-template-columns: repeat(4, 1fr); }
+          .${GRID_CLASS}.pg-small { grid-template-columns: repeat(6, 1fr); }
+        }
         .pg-thumb:hover { opacity: 0.85; }
         .pg-page-btn:hover { background: ${BTN_BG} !important; color: #fff !important; }
       `;
@@ -350,21 +364,39 @@ function Gallery() {
         <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>
           {photos.length} photo{photos.length !== 1 ? "s" : ""}
         </span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>Par page :</span>
-          {PER_PAGE_OPTIONS.map((n) => (
-            <button
-              key={n}
-              onClick={() => { setPerPage(n); setPage(0); }}
-              style={{
-                ...s.chipBtn,
-                background: perPage === n ? BTN_BG : "transparent",
-                color: perPage === n ? "#fff" : COLOR,
-              }}
-            >
-              {n}
-            </button>
-          ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>Taille :</span>
+            {GRID_SIZES.map((sz) => (
+              <button
+                key={sz.key}
+                onClick={() => setGridSize(sz.key)}
+                style={{
+                  ...s.chipBtn,
+                  background: gridSize === sz.key ? BTN_BG : "transparent",
+                  color: gridSize === sz.key ? "#fff" : COLOR,
+                }}
+              >
+                {sz.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>Par page :</span>
+            {PER_PAGE_OPTIONS.map((n) => (
+              <button
+                key={n}
+                onClick={() => { setPerPage(n); setPage(0); }}
+                style={{
+                  ...s.chipBtn,
+                  background: perPage === n ? BTN_BG : "transparent",
+                  color: perPage === n ? "#fff" : COLOR,
+                }}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -375,7 +407,7 @@ function Gallery() {
       )}
 
       {/* Grid */}
-      <div className={GRID_CLASS} style={s.grid}>
+      <div className={`${GRID_CLASS} pg-${gridSize}`} style={s.grid}>
         {pagePhotos.map((photo, i) => {
           const globalIndex = page * perPage + i;
           const isSelected = selected.has(photo.public_id);
@@ -399,7 +431,7 @@ function Gallery() {
                 </div>
               )}
               <img
-                src={imageUrl(photo.public_id, 600)}
+                src={imageUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)}
                 alt=""
                 loading="lazy"
                 style={{
