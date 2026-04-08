@@ -8,7 +8,8 @@ const PASSWORD = "lavande2026";
 const CLOUD_NAME = "dxvypw2kn";
 const UPLOAD_PRESET = "mariage";
 const TAG = "mariage";
-const LIST_URL = `https://res.cloudinary.com/${CLOUD_NAME}/image/list/${TAG}.json`;
+const IMAGE_LIST_URL = `https://res.cloudinary.com/${CLOUD_NAME}/image/list/${TAG}.json`;
+const VIDEO_LIST_URL = `https://res.cloudinary.com/${CLOUD_NAME}/video/list/${TAG}.json`;
 const GRID_CLASS = "pg-photo-grid";
 const FONT = "'EB Garamond', serif";
 const BG = "#F6ECE3";
@@ -26,6 +27,8 @@ const GRID_SIZES: { key: GridSize; label: string }[] = [
 ];
 
 // ─── Types ───
+type MediaType = "image" | "video";
+
 interface CloudinaryResource {
   public_id: string;
   version: number;
@@ -34,6 +37,7 @@ interface CloudinaryResource {
   height: number;
   type: string;
   created_at: string;
+  media: MediaType;
 }
 
 interface CloudinaryListResponse {
@@ -68,8 +72,17 @@ function imageUrl(publicId: string, width: number): string {
   return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/c_fill,w_${width},q_auto,f_auto/${publicId}`;
 }
 
-function downloadUrl(publicId: string, format: string): string {
-  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/fl_attachment/${publicId}.${format}`;
+function videoThumbUrl(publicId: string, width: number): string {
+  return `https://res.cloudinary.com/${CLOUD_NAME}/video/upload/c_fill,w_${width},q_auto,f_jpg,so_1/${publicId}.jpg`;
+}
+
+function videoUrl(publicId: string): string {
+  return `https://res.cloudinary.com/${CLOUD_NAME}/video/upload/q_auto/${publicId}`;
+}
+
+function downloadUrl(publicId: string, format: string, media: MediaType): string {
+  const type = media === "video" ? "video" : "image";
+  return `https://res.cloudinary.com/${CLOUD_NAME}/${type}/upload/fl_attachment/${publicId}.${format}`;
 }
 
 // ─── Login Screen ───
@@ -170,13 +183,24 @@ function Lightbox({
         &#8249;
       </button>
 
-      {/* Image */}
-      <img
-        src={imageUrl(photo.public_id, 1600)}
-        alt=""
-        style={s.lbImage}
-        onClick={(e) => e.stopPropagation()}
-      />
+      {/* Media */}
+      {photo.media === "video" ? (
+        <video
+          src={videoUrl(photo.public_id)}
+          controls
+          autoPlay
+          playsInline
+          style={s.lbImage}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <img
+          src={imageUrl(photo.public_id, 1600)}
+          alt=""
+          style={s.lbImage}
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
 
       {/* Next */}
       <button
@@ -188,7 +212,7 @@ function Lightbox({
 
       {/* Download */}
       <a
-        href={downloadUrl(photo.public_id, photo.format)}
+        href={downloadUrl(photo.public_id, photo.format, photo.media)}
         style={s.lbDownload}
         onClick={(e) => e.stopPropagation()}
       >
@@ -215,13 +239,21 @@ function Gallery() {
 
   const fetchPhotos = useCallback(async () => {
     try {
-      const res = await fetch(`${LIST_URL}?${Date.now()}`);
-      if (!res.ok) { setPhotos([]); return; }
-      const data: CloudinaryListResponse = await res.json();
-      const sorted = [...data.resources].sort(
+      const ts = Date.now();
+      const [imgRes, vidRes] = await Promise.all([
+        fetch(`${IMAGE_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
+        fetch(`${VIDEO_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
+      ]);
+      const images: CloudinaryResource[] = (imgRes.resources || []).map(
+        (r: Omit<CloudinaryResource, "media">) => ({ ...r, media: "image" as const })
+      );
+      const videos: CloudinaryResource[] = (vidRes.resources || []).map(
+        (r: Omit<CloudinaryResource, "media">) => ({ ...r, media: "video" as const })
+      );
+      const all = [...images, ...videos].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
-      setPhotos(sorted);
+      setPhotos(all);
     } catch {
       // retry in 30s
     } finally {
@@ -290,7 +322,7 @@ function Gallery() {
         tags: [TAG],
         sources: ["local", "camera"],
         multiple: true,
-        resourceType: "image",
+        resourceType: "auto",
         language: "fr",
       },
       (_error: unknown, result: { event: string }) => {
@@ -316,7 +348,7 @@ function Gallery() {
     toDownload.forEach((p, i) => {
       setTimeout(() => {
         const a = document.createElement("a");
-        a.href = downloadUrl(p.public_id, p.format);
+        a.href = downloadUrl(p.public_id, p.format, p.media);
         a.download = "";
         document.body.appendChild(a);
         a.click();
@@ -430,8 +462,15 @@ function Gallery() {
                   {isSelected && <span style={{ color: "#fff", fontSize: 14, lineHeight: 1 }}>&#10003;</span>}
                 </div>
               )}
+              {photo.media === "video" && (
+                <div style={s.playBadge}>&#9654;</div>
+              )}
               <img
-                src={imageUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)}
+                src={
+                  photo.media === "video"
+                    ? videoThumbUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)
+                    : imageUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)
+                }
                 alt=""
                 loading="lazy"
                 style={{
@@ -592,6 +631,13 @@ const s: Record<string, React.CSSProperties> = {
   image: {
     width: "100%", height: "100%", objectFit: "cover", display: "block",
     transition: "opacity 0.2s",
+  },
+  playBadge: {
+    position: "absolute", bottom: 8, right: 8, zIndex: 2,
+    width: 32, height: 32, borderRadius: 16,
+    background: "rgba(0,0,0,0.55)", color: "#fff",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 14, pointerEvents: "none",
   },
   checkbox: {
     position: "absolute", top: 8, left: 8, zIndex: 2,
