@@ -123,16 +123,24 @@ function Gallery() {
     }
   }, []);
 
-  // Inject responsive grid CSS
+  // Inject responsive grid CSS + Google Font
   useEffect(() => {
-    if (document.getElementById("pg-grid-style")) return;
-    const style = document.createElement("style");
-    style.id = "pg-grid-style";
-    style.textContent = `
-      .${GRID_CLASS} { grid-template-columns: repeat(2, 1fr); }
-      @media (min-width: 640px) { .${GRID_CLASS} { grid-template-columns: repeat(3, 1fr); } }
-    `;
-    document.head.appendChild(style);
+    if (!document.getElementById("pg-grid-style")) {
+      const style = document.createElement("style");
+      style.id = "pg-grid-style";
+      style.textContent = `
+        .${GRID_CLASS} { grid-template-columns: repeat(2, 1fr); }
+        @media (min-width: 640px) { .${GRID_CLASS} { grid-template-columns: repeat(3, 1fr); } }
+      `;
+      document.head.appendChild(style);
+    }
+    if (!document.getElementById("pg-font-link")) {
+      const link = document.createElement("link");
+      link.id = "pg-font-link";
+      link.rel = "stylesheet";
+      link.href = "https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap";
+      document.head.appendChild(link);
+    }
   }, []);
 
   // Load Cloudinary widget script
@@ -249,8 +257,9 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "#fff",
+    background: "#F6ECE3",
     padding: 16,
+    fontFamily: "'EB Garamond', serif",
   },
   loginForm: {
     width: "100%",
@@ -260,43 +269,51 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
   },
   loginTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 600,
     textAlign: "center",
     margin: 0,
-    color: "#1a1a1a",
+    color: "#41611D",
+    fontFamily: "'EB Garamond', serif",
   },
   loginSubtitle: {
-    fontSize: 14,
-    color: "#666",
+    fontSize: 15,
+    color: "#41611D",
     textAlign: "center",
     margin: 0,
     marginBottom: 8,
+    fontFamily: "'EB Garamond', serif",
+    opacity: 0.75,
   },
   input: {
     padding: "12px 14px",
     fontSize: 16,
-    border: "1px solid #ddd",
+    border: "1px solid #c5b9ad",
     borderRadius: 8,
     outline: "none",
     width: "100%",
     boxSizing: "border-box",
+    fontFamily: "'EB Garamond', serif",
+    color: "#41611D",
+    background: "#fff",
   },
   error: {
     color: "#dc2626",
-    fontSize: 13,
+    fontSize: 14,
     margin: 0,
     textAlign: "center",
+    fontFamily: "'EB Garamond', serif",
   },
   submitBtn: {
     padding: "12px 0",
     fontSize: 16,
     fontWeight: 500,
     color: "#fff",
-    background: "#1a1a1a",
+    background: "#41611D",
     border: "none",
     borderRadius: 8,
     cursor: "pointer",
+    fontFamily: "'EB Garamond', serif",
   },
   // Gallery
   container: {
@@ -304,7 +321,8 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 960,
     margin: "0 auto",
     padding: "24px 16px",
-    background: "#fff",
+    background: "#F6ECE3",
+    fontFamily: "'EB Garamond', serif",
   },
   header: {
     display: "flex",
@@ -315,32 +333,38 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 24,
   },
   title: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: 600,
     margin: 0,
-    color: "#1a1a1a",
+    color: "#41611D",
+    fontFamily: "'EB Garamond', serif",
   },
   uploadBtn: {
     padding: "10px 20px",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: 500,
     color: "#fff",
-    background: "#1a1a1a",
+    background: "#41611D",
     border: "none",
     borderRadius: 8,
     cursor: "pointer",
     whiteSpace: "nowrap",
+    fontFamily: "'EB Garamond', serif",
   },
   loadingText: {
     textAlign: "center",
-    color: "#999",
-    fontSize: 14,
+    color: "#41611D",
+    fontSize: 15,
+    fontFamily: "'EB Garamond', serif",
+    opacity: 0.6,
   },
   emptyText: {
     textAlign: "center",
-    color: "#999",
-    fontSize: 14,
+    color: "#41611D",
+    fontSize: 15,
     padding: "40px 0",
+    fontFamily: "'EB Garamond', serif",
+    opacity: 0.6,
   },
   grid: {
     display: "grid",
