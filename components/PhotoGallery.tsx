@@ -488,6 +488,15 @@ export default function PhotoGallery() {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
+    // Auto-login via URL params
+    if (!isAuthenticated()) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("login") === LOGIN && params.get("pwd") === PASSWORD) {
+        setAuthenticated();
+        setAuthed(true);
+        return;
+      }
+    }
     setAuthed(isAuthenticated());
   }, []);
 
