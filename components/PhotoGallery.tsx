@@ -41,7 +41,7 @@ interface CloudinaryResource {
 }
 
 interface CloudinaryListResponse {
-  resources: CloudinaryResource[];
+  resources: Omit<CloudinaryResource, "media">[];
   updated_at: string;
 }
 
@@ -240,15 +240,15 @@ function Gallery() {
   const fetchPhotos = useCallback(async () => {
     try {
       const ts = Date.now();
-      const [imgRes, vidRes] = await Promise.all([
+      const [imgRes, vidRes]: CloudinaryListResponse[] = await Promise.all([
         fetch(`${IMAGE_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
         fetch(`${VIDEO_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
       ]);
       const images: CloudinaryResource[] = (imgRes.resources || []).map(
-        (r: Omit<CloudinaryResource, "media">) => ({ ...r, media: "image" as const })
+        (r) => ({ ...r, media: "image" as const })
       );
       const videos: CloudinaryResource[] = (vidRes.resources || []).map(
-        (r: Omit<CloudinaryResource, "media">) => ({ ...r, media: "video" as const })
+        (r) => ({ ...r, media: "video" as const })
       );
       const all = [...images, ...videos].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
