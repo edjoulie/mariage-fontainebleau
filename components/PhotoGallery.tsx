@@ -245,7 +245,7 @@ export default function PhotoGallery() {
 const styles: Record<string, React.CSSProperties> = {
   // Login
   loginOverlay: {
-    minHeight: "100vh",
+    minHeight: 500,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
