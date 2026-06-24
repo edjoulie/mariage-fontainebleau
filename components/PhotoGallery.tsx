@@ -85,6 +85,11 @@ function downloadUrl(publicId: string, format: string, media: MediaType): string
   return `https://res.cloudinary.com/${CLOUD_NAME}/${type}/upload/fl_attachment/${publicId}.${format}`;
 }
 
+// Nom lisible derive du public_id (retire le dossier et nettoie le nom de fichier)
+function displayName(publicId: string): string {
+  return publicId.split("/").pop() || publicId;
+}
+
 // ─── Login Screen ───
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const [login, setLogin] = useState("");
@@ -173,7 +178,10 @@ function Lightbox({
       <button style={s.lbClose} onClick={onClose}>&#10005;</button>
 
       {/* Counter */}
-      <div style={s.lbCounter}>{index + 1} / {photos.length}</div>
+      <div style={s.lbCounter}>
+        {index + 1} / {photos.length}
+        <span style={{ opacity: 0.7 }}> — {displayName(photo.public_id)}</span>
+      </div>
 
       {/* Prev */}
       <button
@@ -471,13 +479,14 @@ function Gallery() {
                     ? videoThumbUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)
                     : imageUrl(photo.public_id, gridSize === "small" ? 300 : gridSize === "medium" ? 400 : 600)
                 }
-                alt=""
+                alt={displayName(photo.public_id)}
                 loading="lazy"
                 style={{
                   ...s.image,
                   opacity: selectMode && !isSelected ? 0.6 : 1,
                 }}
               />
+              <div style={s.caption}>{displayName(photo.public_id)}</div>
             </div>
           );
         })}
@@ -631,6 +640,13 @@ const s: Record<string, React.CSSProperties> = {
   image: {
     width: "100%", height: "100%", objectFit: "cover", display: "block",
     transition: "opacity 0.2s",
+  },
+  caption: {
+    position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 1,
+    padding: "16px 8px 6px", color: "#fff", fontFamily: FONT, fontSize: 12,
+    lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden",
+    textOverflow: "ellipsis", pointerEvents: "none",
+    background: "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0))",
   },
   playBadge: {
     position: "absolute", bottom: 8, right: 8, zIndex: 2,
