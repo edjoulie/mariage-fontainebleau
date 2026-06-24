@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 
 // ─── Identifiants ───
 const LOGIN = "mariage";
@@ -90,6 +91,203 @@ function displayName(publicId: string): string {
   return publicId.split("/").pop() || publicId;
 }
 
+// ─── Reactions & Commentaires ───
+const REACTION_EMOJIS = ["❤️", "🎉", "😍", "👏", "😂"];
+
+interface CommentItem {
+  name: string;
+  text: string;
+  ts: number;
+}
+
+interface PhotoMeta {
+  reactions: Record<string, number>;
+  comments: number;
+}
+
+function reactionStorageKey(id: string): string {
+  return `pg_react_${id}`;
+}
+
+function getMyReactions(id: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(reactionStorageKey(id)) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function setMyReactions(id: string, arr: string[]): void {
+  localStorage.setItem(reactionStorageKey(id), JSON.stringify(arr));
+}
+
+// Barre de reactions emoji affichee sous la photo en plein ecran.
+function ReactionBar({ publicId }: { publicId: string }) {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [mine, setMine] = useState<string[]>([]);
+
+  useEffect(() => {
+    setMine(getMyReactions(publicId));
+    let active = true;
+    fetch(`/api/reactions?id=${encodeURIComponent(publicId)}`)
+      .then((r) => r.json())
+      .then((d) => { if (active) setCounts(d.reactions || {}); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [publicId]);
+
+  const toggle = (emoji: string) => {
+    const has = mine.includes(emoji);
+    const delta = has ? -1 : 1;
+    const nextMine = has ? mine.filter((e) => e !== emoji) : [...mine, emoji];
+    setMine(nextMine);
+    setMyReactions(publicId, nextMine);
+    setCounts((c) => ({ ...c, [emoji]: Math.max(0, (Number(c[emoji]) || 0) + delta) }));
+    fetch("/api/reactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: publicId, emoji, delta }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.reactions) setCounts(d.reactions); })
+      .catch(() => {});
+  };
+
+  return (
+    <div style={s.reactionBar}>
+      {REACTION_EMOJIS.map((emoji) => {
+        const active = mine.includes(emoji);
+        const n = Number(counts[emoji]) || 0;
+        return (
+          <button
+            key={emoji}
+            onClick={(e) => { e.stopPropagation(); toggle(emoji); }}
+            style={{ ...s.reactionBtn, ...(active ? s.reactionBtnActive : {}) }}
+            aria-pressed={active}
+          >
+            <span style={{ fontSize: 20, lineHeight: 1 }}>{emoji}</span>
+            {n > 0 && <span style={s.reactionCount}>{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Panneau de commentaires (liste + formulaire) affiche sous la photo en plein ecran.
+function CommentsPanel({
+  publicId,
+  visible,
+  onClose,
+  onCount,
+}: {
+  publicId: string;
+  visible: boolean;
+  onClose: () => void;
+  onCount: (n: number) => void;
+}) {
+  const [comments, setComments] = useState<CommentItem[]>([]);
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    setName(localStorage.getItem("pg_comment_name") || "");
+  }, []);
+
+  // Charge les commentaires des le montage (meme si la feuille est fermee),
+  // pour pouvoir afficher le compteur sur le bouton.
+  useEffect(() => {
+    let active = true;
+    setLoaded(false);
+    fetch(`/api/comments?id=${encodeURIComponent(publicId)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!active) return;
+        const c: CommentItem[] = d.comments || [];
+        setComments(c);
+        setLoaded(true);
+        onCount(c.length);
+      })
+      .catch(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, [publicId, onCount]);
+
+  const submit = () => {
+    const t = text.trim();
+    if (!t || sending) return;
+    setSending(true);
+    const cleanName = name.trim().slice(0, 40);
+    localStorage.setItem("pg_comment_name", cleanName);
+    fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: publicId, name: cleanName, text: t }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        const c: CommentItem[] = d.comments || [];
+        setComments(c);
+        setText("");
+        onCount(c.length);
+      })
+      .catch(() => {})
+      .finally(() => setSending(false));
+  };
+
+  if (!visible) return null;
+
+  return (
+    <>
+      <div style={s.lbSheetBackdrop} onClick={(e) => { e.stopPropagation(); onClose(); }} />
+      <div style={s.lbSheet} onClick={(e) => e.stopPropagation()}>
+        <div style={s.lbSheetHeader}>
+          <span style={s.lbSheetTitle}>
+            Commentaires{comments.length > 0 ? ` (${comments.length})` : ""}
+          </span>
+          <button style={s.lbSheetClose} onClick={onClose} aria-label="Fermer">&#10005;</button>
+        </div>
+        <div style={s.commentsList}>
+          {loaded && comments.length === 0 && (
+            <div style={s.commentsEmpty}>Soyez le premier à laisser un mot ✍️</div>
+          )}
+          {comments.map((c, i) => (
+            <div key={i} style={s.commentItem}>
+              <span style={s.commentName}>{c.name}</span>
+              <span style={s.commentText}>{c.text}</span>
+            </div>
+          ))}
+        </div>
+        <div style={s.commentForm}>
+          <input
+            style={s.commentNameInput}
+            placeholder="Prénom"
+            value={name}
+            maxLength={40}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            style={s.commentTextInput}
+            placeholder="Votre message…"
+            value={text}
+            maxLength={500}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          />
+          <button
+            style={{ ...s.commentSend, opacity: sending || !text.trim() ? 0.5 : 1 }}
+            onClick={submit}
+            disabled={sending || !text.trim()}
+          >
+            Envoyer
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Login Screen ───
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const [login, setLogin] = useState("");
@@ -149,84 +347,122 @@ function Lightbox({
   onNext: () => void;
 }) {
   const photo = photos[index];
+  const [showComments, setShowComments] = useState(false);
+  const [commentCount, setCommentCount] = useState<number | null>(null);
+
+  // Reinitialise la vue commentaires quand on change de photo.
+  useEffect(() => {
+    setShowComments(false);
+    setCommentCount(null);
+  }, [photo.public_id]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA";
+      if (e.key === "Escape") {
+        if (showComments) setShowComments(false);
+        else onClose();
+        return;
+      }
+      if (typing || showComments) return; // pas de navigation en tapant / feuille ouverte
       if (e.key === "ArrowLeft") onPrev();
       if (e.key === "ArrowRight") onNext();
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose, onPrev, onNext]);
+  }, [onClose, onPrev, onNext, showComments]);
 
   // Swipe support
   const touchStart = useRef(0);
 
-  return (
+  // Rendu via un portail sur <body> : indispensable car un ancetre Plasmic
+  // possede un `transform`, ce qui "capturerait" notre position:fixed et
+  // empecherait l'overlay de couvrir tout l'ecran.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
       style={s.lbOverlay}
       onClick={onClose}
       onTouchStart={(e) => { touchStart.current = e.touches[0].clientX; }}
       onTouchEnd={(e) => {
+        if (showComments) return;
         const dx = e.changedTouches[0].clientX - touchStart.current;
         if (dx > 60) onPrev();
         else if (dx < -60) onNext();
       }}
     >
-      {/* Close */}
-      <button style={s.lbClose} onClick={onClose}>&#10005;</button>
+      {/* Media plein ecran + fleches */}
+      <div style={s.lbStage}>
+        <button
+          style={{ ...s.lbArrow, left: 8 }}
+          onClick={(e) => { e.stopPropagation(); onPrev(); }}
+        >
+          &#8249;
+        </button>
 
-      {/* Counter */}
-      <div style={s.lbCounter}>
-        {index + 1} / {photos.length}
-        <span style={{ opacity: 0.7 }}> — {displayName(photo.public_id)}</span>
+        {photo.media === "video" ? (
+          <video
+            src={videoUrl(photo.public_id)}
+            controls
+            autoPlay
+            playsInline
+            style={s.lbImage}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <img
+            src={imageUrl(photo.public_id, 1600)}
+            alt={displayName(photo.public_id)}
+            style={s.lbImage}
+            onClick={(e) => e.stopPropagation()}
+          />
+        )}
+
+        <button
+          style={{ ...s.lbArrow, right: 8 }}
+          onClick={(e) => { e.stopPropagation(); onNext(); }}
+        >
+          &#8250;
+        </button>
       </div>
 
-      {/* Prev */}
-      <button
-        style={{ ...s.lbArrow, left: 8 }}
-        onClick={(e) => { e.stopPropagation(); onPrev(); }}
-      >
-        &#8249;
-      </button>
+      {/* Barre haute : compteur + nom + fermer (superposee a l'image) */}
+      <div style={s.lbTopBar} onClick={(e) => e.stopPropagation()}>
+        <div style={s.lbTopInfo}>
+          {index + 1} / {photos.length}
+          <span style={{ opacity: 0.75 }}> — {displayName(photo.public_id)}</span>
+        </div>
+        <button style={s.lbClose} onClick={onClose} aria-label="Fermer">&#10005;</button>
+      </div>
 
-      {/* Media */}
-      {photo.media === "video" ? (
-        <video
-          src={videoUrl(photo.public_id)}
-          controls
-          autoPlay
-          playsInline
-          style={s.lbImage}
-          onClick={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <img
-          src={imageUrl(photo.public_id, 1600)}
-          alt=""
-          style={s.lbImage}
-          onClick={(e) => e.stopPropagation()}
-        />
-      )}
+      {/* Barre basse : reactions + commentaires + telechargement */}
+      <div style={s.lbBottomBar} onClick={(e) => e.stopPropagation()}>
+        <ReactionBar key={`r-${photo.public_id}`} publicId={photo.public_id} />
+        <div style={s.lbBottomActions}>
+          <button style={s.lbActionBtn} onClick={() => setShowComments(true)}>
+            &#128172; Commentaires{commentCount ? ` (${commentCount})` : ""}
+          </button>
+          <a
+            href={downloadUrl(photo.public_id, photo.format, photo.media)}
+            style={s.lbActionBtn}
+          >
+            &#11015; Telecharger
+          </a>
+        </div>
+      </div>
 
-      {/* Next */}
-      <button
-        style={{ ...s.lbArrow, right: 8 }}
-        onClick={(e) => { e.stopPropagation(); onNext(); }}
-      >
-        &#8250;
-      </button>
-
-      {/* Download */}
-      <a
-        href={downloadUrl(photo.public_id, photo.format, photo.media)}
-        style={s.lbDownload}
-        onClick={(e) => e.stopPropagation()}
-      >
-        Telecharger
-      </a>
-    </div>
+      {/* Feuille commentaires (a la demande, montee en continu pour le compteur) */}
+      <CommentsPanel
+        key={`c-${photo.public_id}`}
+        publicId={photo.public_id}
+        visible={showComments}
+        onClose={() => setShowComments(false)}
+        onCount={setCommentCount}
+      />
+    </div>,
+    document.body
   );
 }
 
@@ -240,10 +476,28 @@ function Gallery() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [gridSize, setGridSize] = useState<GridSize>("large");
+  const [meta, setMeta] = useState<Record<string, PhotoMeta>>({});
   const scriptLoaded = useRef(false);
 
   const totalPages = Math.ceil(photos.length / perPage);
   const pagePhotos = photos.slice(page * perPage, (page + 1) * perPage);
+  const pageIdsKey = pagePhotos.map((p) => p.public_id).join(",");
+
+  // Resume reactions/commentaires pour les vignettes de la page courante.
+  const fetchMeta = useCallback(() => {
+    const ids = pageIdsKey ? pageIdsKey.split(",") : [];
+    if (ids.length === 0) return;
+    fetch("/api/photo-meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.meta) setMeta((m) => ({ ...m, ...d.meta })); })
+      .catch(() => {});
+  }, [pageIdsKey]);
+
+  useEffect(() => { fetchMeta(); }, [fetchMeta]);
 
   const fetchPhotos = useCallback(async () => {
     try {
@@ -451,6 +705,10 @@ function Gallery() {
         {pagePhotos.map((photo, i) => {
           const globalIndex = page * perPage + i;
           const isSelected = selected.has(photo.public_id);
+          const pm = meta[photo.public_id];
+          const reactTotal = pm
+            ? Object.values(pm.reactions || {}).reduce((a, b) => a + (Number(b) || 0), 0)
+            : 0;
           return (
             <div
               key={photo.public_id}
@@ -461,6 +719,12 @@ function Gallery() {
                 else setLightboxIndex(globalIndex);
               }}
             >
+              {!selectMode && (reactTotal > 0 || (pm && pm.comments > 0)) && (
+                <div style={s.metaBadge}>
+                  {reactTotal > 0 && <span>&#10084;&#65039; {reactTotal}</span>}
+                  {pm && pm.comments > 0 && <span>&#128172; {pm.comments}</span>}
+                </div>
+              )}
               {selectMode && (
                 <div style={{
                   ...s.checkbox,
@@ -522,7 +786,7 @@ function Gallery() {
         <Lightbox
           photos={photos}
           index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          onClose={() => { setLightboxIndex(null); fetchMeta(); }}
           onPrev={() => setLightboxIndex((i) => (i! > 0 ? i! - 1 : photos.length - 1))}
           onNext={() => setLightboxIndex((i) => (i! < photos.length - 1 ? i! + 1 : 0))}
         />
@@ -675,31 +939,138 @@ const s: Record<string, React.CSSProperties> = {
   // Lightbox
   lbOverlay: {
     position: "fixed", inset: 0, zIndex: 9999,
-    background: "rgba(0,0,0,0.92)",
+    background: "rgba(0,0,0,0.98)",
+  },
+  // L'image occupe tout l'ecran ; les barres se superposent dans les marges.
+  lbStage: {
+    position: "absolute", inset: 0,
     display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "52px 8px 104px",
   },
   lbImage: {
-    maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: 4,
-  },
-  lbClose: {
-    position: "absolute", top: 16, right: 16, zIndex: 10,
-    background: "none", border: "none", color: "#fff",
-    fontSize: 28, cursor: "pointer", fontFamily: FONT,
-  },
-  lbCounter: {
-    position: "absolute", top: 18, left: "50%", transform: "translateX(-50%)",
-    color: "rgba(255,255,255,0.7)", fontSize: 15, fontFamily: FONT,
+    maxWidth: "96vw", maxHeight: "100%", objectFit: "contain", borderRadius: 4,
   },
   lbArrow: {
-    position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 10,
+    position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 12,
     background: "rgba(255,255,255,0.15)", border: "none", color: "#fff",
     fontSize: 40, width: 48, height: 48, borderRadius: 24,
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
   },
-  lbDownload: {
-    position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
-    padding: "10px 24px", fontSize: 15, fontFamily: FONT,
-    color: "#fff", background: BTN_BG, borderRadius: 8,
-    textDecoration: "none", cursor: "pointer",
+  // Barre haute (compteur + nom + fermer), superposee a l'image.
+  lbTopBar: {
+    position: "absolute", top: 0, left: 0, right: 0, zIndex: 13,
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+    padding: "10px 14px", fontFamily: FONT,
+    background: "linear-gradient(to bottom, rgba(0,0,0,0.7), rgba(0,0,0,0))",
+  },
+  lbTopInfo: {
+    flex: 1, minWidth: 0, color: "rgba(255,255,255,0.92)", fontSize: 14,
+    fontFamily: FONT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  lbClose: {
+    flexShrink: 0, background: "none", border: "none", color: "#fff",
+    fontSize: 26, lineHeight: 1, cursor: "pointer", fontFamily: FONT, padding: "2px 6px",
+  },
+  // Barre basse (reactions + actions), superposee a l'image.
+  lbBottomBar: {
+    position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 13,
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+    padding: "22px 14px 22px", fontFamily: FONT,
+    background: "linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0))",
+  },
+  lbBottomActions: {
+    display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap",
+  },
+  lbActionBtn: {
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "9px 18px", borderRadius: 22, border: "none",
+    background: "rgba(255,255,255,0.18)", color: "#fff",
+    cursor: "pointer", fontFamily: FONT, fontSize: 14,
+    textDecoration: "none", whiteSpace: "nowrap",
+  },
+  // Feuille commentaires
+  lbSheetBackdrop: {
+    position: "absolute", inset: 0, zIndex: 15, background: "rgba(0,0,0,0.4)",
+  },
+  lbSheet: {
+    position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 20,
+    maxHeight: "72vh", display: "flex", flexDirection: "column", gap: 10,
+    padding: "12px 16px 18px", fontFamily: FONT,
+    background: "rgba(18,18,18,0.98)",
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    boxShadow: "0 -10px 40px rgba(0,0,0,0.5)",
+  },
+  lbSheetHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+  },
+  lbSheetTitle: {
+    color: "#fff", fontSize: 16, fontWeight: 600, fontFamily: FONT,
+  },
+  lbSheetClose: {
+    background: "none", border: "none", color: "#fff",
+    fontSize: 22, lineHeight: 1, cursor: "pointer", padding: "2px 6px",
+  },
+
+  // Reactions
+  reactionBar: {
+    display: "flex", gap: 6, flexWrap: "wrap",
+  },
+  reactionBtn: {
+    display: "inline-flex", alignItems: "center", gap: 5,
+    padding: "6px 10px", borderRadius: 20,
+    background: "rgba(255,255,255,0.12)", border: "1px solid transparent",
+    color: "#fff", cursor: "pointer", fontFamily: FONT, fontSize: 14,
+  },
+  reactionBtnActive: {
+    background: "rgba(255,255,255,0.28)", borderColor: "rgba(255,255,255,0.7)",
+  },
+  reactionCount: {
+    fontSize: 13, color: "#fff",
+  },
+
+  // Commentaires
+  commentsWrap: {
+    display: "flex", flexDirection: "column", gap: 8,
+  },
+  commentsList: {
+    flex: 1, minHeight: 40, maxHeight: "52vh", overflowY: "auto",
+    display: "flex", flexDirection: "column", gap: 6,
+  },
+  commentsEmpty: {
+    color: "rgba(255,255,255,0.6)", fontSize: 14, fontStyle: "italic",
+  },
+  commentItem: {
+    fontSize: 14, color: "#fff", lineHeight: 1.4,
+  },
+  commentName: {
+    fontWeight: 600, marginRight: 6, color: "#fff",
+  },
+  commentText: {
+    color: "rgba(255,255,255,0.92)", wordBreak: "break-word",
+  },
+  commentForm: {
+    display: "flex", gap: 6, flexWrap: "wrap",
+  },
+  commentNameInput: {
+    flex: "0 0 90px", minWidth: 0, padding: "8px 10px", borderRadius: 8,
+    border: "none", fontFamily: FONT, fontSize: 14,
+  },
+  commentTextInput: {
+    flex: 1, minWidth: 120, padding: "8px 10px", borderRadius: 8,
+    border: "none", fontFamily: FONT, fontSize: 14,
+  },
+  commentSend: {
+    padding: "8px 16px", borderRadius: 8, border: "none",
+    background: BTN_BG, color: "#fff", cursor: "pointer",
+    fontFamily: FONT, fontSize: 14, whiteSpace: "nowrap",
+  },
+
+  // Badge resume sur la vignette
+  metaBadge: {
+    position: "absolute", top: 6, right: 6, zIndex: 2,
+    display: "flex", gap: 6, alignItems: "center",
+    padding: "3px 7px", borderRadius: 12,
+    background: "rgba(0,0,0,0.55)", color: "#fff",
+    fontSize: 11, fontFamily: FONT, pointerEvents: "none", lineHeight: 1.2,
   },
 };
