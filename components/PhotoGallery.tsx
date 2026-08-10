@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
+import { createZip, ZipEntryInput } from "@/lib/zip";
 
 // ─── Identifiants ───
 const LOGIN = "mariage";
@@ -24,6 +25,12 @@ const BTN_BG = "#41611D";
 // ─── Config ───
 const PER_PAGE_OPTIONS = [12, 24, 48];
 
+// Telechargement groupe : nom de base des archives et taille max de chacune.
+// Le ZIP est assemble dans le navigateur, donc on decoupe une grosse selection
+// en plusieurs fichiers plutot que de saturer la memoire d'un telephone.
+const ZIP_BASENAME = "photos-mariage";
+const MAX_ZIP_BYTES = 400 * 1024 * 1024;
+
 type GridSize = "large" | "medium" | "small";
 const GRID_SIZES: { key: GridSize; label: string }[] = [
   { key: "large", label: "Grande" },
@@ -44,21 +51,23 @@ const FILTERS: { key: PhotoFilter; label: string }[] = [
 // Laissez une valeur vide ("") pour masquer la ligne correspondante.
 // ─────────────────────────────────────────────────────────────────
 const PHOTOGRAPHER = {
-  // Nom deduit des fichiers livres ("AstridetEdouardparAlineRuze-*.jpg") — a corriger si besoin.
-  name: "Aline Ruze",
-  role: "Photographe de mariage",
+  name: "Aline Ruzé",
+  // Sa propre formulation, reprise de alineruze.fr.
+  role: "Photographe reportage, lifestyle et studio",
   // Lien vers la galerie Jingoo qu'elle nous a transmise (bouton principal)
   jingooUrl: "https://www.jingoo.com/client/key/686455/f35a3c1b/",
   jingooLabel: "Voir la galerie complète en haute définition",
-  // Contact — laissez "" pour ne pas afficher
-  email: "",
-  phone: "",
-  website: "",
+  // Contact — laissez "" pour ne pas afficher.
+  // Email et telephone repris de la page contact de son site professionnel.
+  email: "contact@alineruze.fr",
+  phone: "+33 6 76 36 00 53",
+  website: "https://www.alineruze.fr/",
   instagram: "", // ex. "@son_compte" ou une URL complete
   // Texte libre affiche sous les coordonnees
   blurb:
     "Toutes les photos de cette sélection sont les siennes. " +
-    "Sa galerie complète est disponible en haute définition sur son site.",
+    "Sa galerie complète est disponible en haute définition juste en dessous, " +
+    "et vous pouvez découvrir le reste de son travail sur son site.",
   printsNote:
     "Tirages, albums et agrandissements peuvent être commandés directement auprès d'elle.",
 };
@@ -135,9 +144,38 @@ function downloadUrl(publicId: string, format: string, media: MediaType): string
   return `https://res.cloudinary.com/${CLOUD_NAME}/${type}/upload/fl_attachment/${publicId}.${format}`;
 }
 
+// Fichier d'origine, sans `fl_attachment` : sert a recuperer les octets en
+// fetch() pour les mettre dans le ZIP (Cloudinary autorise le CORS dessus).
+function originalUrl(publicId: string, format: string, media: MediaType): string {
+  const type = media === "video" ? "video" : "image";
+  return `https://res.cloudinary.com/${CLOUD_NAME}/${type}/upload/${publicId}.${format}`;
+}
+
+// Declenche l'enregistrement d'un Blob sous le nom voulu.
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoquer trop tot interromprait l'enregistrement d'une grosse archive.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 // Nom lisible derive du public_id (retire le dossier et nettoie le nom de fichier)
 function displayName(publicId: string): string {
   return publicId.split("/").pop() || publicId;
+}
+
+// Cle de selection : une image et une video peuvent partager le meme public_id.
+function photoKey(p: { media: MediaType; public_id: string }): string {
+  return `${p.media}:${p.public_id}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ─── Reactions & Commentaires ───
@@ -585,7 +623,11 @@ function Gallery({
   const [gridSize, setGridSize] = useState<GridSize>("large");
   const [meta, setMeta] = useState<Record<string, PhotoMeta>>({});
   const [filter, setFilter] = useState<PhotoFilter>(defaultFilter);
+  const [downloading, setDownloading] = useState<
+    { done: number; total: number; label: string } | null
+  >(null);
   const scriptLoaded = useRef(false);
+  const cancelDownload = useRef(false);
 
   const proCount = photos.filter((p) => p.isPro).length;
   const counts: Record<PhotoFilter, number> = {
@@ -751,30 +793,144 @@ function Gallery({
     widget.open();
   };
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = (key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  const downloadSelected = () => {
-    const toDownload = photos.filter((p) => selected.has(p.public_id));
-    toDownload.forEach((p, i) => {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = downloadUrl(p.public_id, p.format, p.media);
-        a.download = "";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }, i * 500);
+  // "Tout selectionner" porte sur le filtre courant (toutes les pages),
+  // "Cette page" sur les seules vignettes affichees.
+  const allFilteredSelected =
+    filteredPhotos.length > 0 && filteredPhotos.every((p) => selected.has(photoKey(p)));
+  const pageSelected =
+    pagePhotos.length > 0 && pagePhotos.every((p) => selected.has(photoKey(p)));
+
+  const setSelection = (subset: CloudinaryResource[], on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      subset.forEach((p) => (on ? next.add(photoKey(p)) : next.delete(photoKey(p))));
+      return next;
     });
   };
 
+  // Telechargement groupe : une (ou plusieurs) archives ZIP assemblees dans le
+  // navigateur. Au-dela de MAX_ZIP_BYTES on coupe en plusieurs fichiers, pour
+  // ne pas faire exploser la memoire des telephones sur une grosse selection.
+  const downloadSelectedZip = async () => {
+    if (downloading) return;
+    // On repart de `photos` : la selection survit a un changement de filtre.
+    const toDownload = photos.filter((p) => selected.has(photoKey(p)));
+    if (toDownload.length === 0) return;
+
+    cancelDownload.current = false;
+    setDownloading({ done: 0, total: toDownload.length, label: "Preparation..." });
+
+    let batch: ZipEntryInput[] = [];
+    let batchBytes = 0;
+    let partsSaved = 0;
+    let failed = 0;
+
+    const flush = async (isLast: boolean) => {
+      if (batch.length === 0) return;
+      setDownloading((d) => (d ? { ...d, label: "Creation de l'archive..." } : d));
+      const zip = await createZip(batch);
+      const name =
+        partsSaved === 0 && isLast ? `${ZIP_BASENAME}.zip` : `${ZIP_BASENAME}-${partsSaved + 1}.zip`;
+      saveBlob(zip, name);
+      partsSaved += 1;
+      batch = [];
+      batchBytes = 0;
+      // Laisse le navigateur enregistrer l'archive avant d'enchainer.
+      if (!isLast) await sleep(1200);
+    };
+
+    for (let i = 0; i < toDownload.length; i++) {
+      if (cancelDownload.current) break;
+      const p = toDownload[i];
+      setDownloading({
+        done: i,
+        total: toDownload.length,
+        label: `Telechargement ${i + 1}/${toDownload.length}`,
+      });
+      try {
+        const res = await fetch(originalUrl(p.public_id, p.format, p.media));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        // On ferme l'archive courante avant d'ajouter un fichier qui la ferait
+        // deborder (sauf si elle est vide : un fichier enorme part seul).
+        if (batch.length > 0 && batchBytes + blob.size > MAX_ZIP_BYTES) {
+          await flush(false);
+          if (cancelDownload.current) break;
+        }
+        batch.push({
+          name: `${displayName(p.public_id)}.${p.format}`,
+          blob,
+          date: new Date(p.created_at),
+        });
+        batchBytes += blob.size;
+      } catch {
+        failed += 1;
+      }
+      setDownloading({
+        done: i + 1,
+        total: toDownload.length,
+        label: `Telechargement ${i + 1}/${toDownload.length}`,
+      });
+    }
+
+    if (!cancelDownload.current) await flush(true);
+    setDownloading(null);
+
+    if (failed > 0) {
+      alert(
+        `${failed} fichier(s) n'ont pas pu etre recuperes et ne sont pas dans l'archive.`
+      );
+    }
+  };
+
+  // Repli : un fichier a la fois, sans archive (utile si le ZIP echoue,
+  // par exemple sur un vieux navigateur mobile).
+  const downloadSelectedOneByOne = async () => {
+    if (downloading) return;
+    const toDownload = photos.filter((p) => selected.has(photoKey(p)));
+    if (toDownload.length === 0) return;
+    if (
+      toDownload.length > 25 &&
+      !window.confirm(
+        `Telecharger ${toDownload.length} fichiers un par un ?\n` +
+          "Votre navigateur va demander l'autorisation des telechargements multiples, " +
+          "et cela peut prendre quelques minutes."
+      )
+    ) {
+      return;
+    }
+
+    cancelDownload.current = false;
+    for (let i = 0; i < toDownload.length; i++) {
+      if (cancelDownload.current) break;
+      const p = toDownload[i];
+      const a = document.createElement("a");
+      a.href = downloadUrl(p.public_id, p.format, p.media);
+      a.download = `${displayName(p.public_id)}.${p.format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setDownloading({
+        done: i + 1,
+        total: toDownload.length,
+        label: `Fichier ${i + 1}/${toDownload.length}`,
+      });
+      if (i < toDownload.length - 1) await sleep(400);
+    }
+    setDownloading(null);
+  };
+
   const exitSelectMode = () => {
+    cancelDownload.current = true;
     setSelectMode(false);
     setSelected(new Set());
   };
@@ -794,12 +950,45 @@ function Gallery({
             <>
               <button onClick={exitSelectMode} style={s.btnOutline}>Annuler</button>
               <button
-                onClick={downloadSelected}
-                style={{ ...s.btn, opacity: selected.size === 0 ? 0.5 : 1 }}
-                disabled={selected.size === 0}
+                onClick={() => setSelection(filteredPhotos, !allFilteredSelected)}
+                style={s.btnOutline}
+                disabled={filteredPhotos.length === 0}
               >
-                Telecharger ({selected.size})
+                {allFilteredSelected
+                  ? "Tout deselectionner"
+                  : `Tout selectionner (${filteredPhotos.length})`}
               </button>
+              {totalPages > 1 && (
+                <button
+                  onClick={() => setSelection(pagePhotos, !pageSelected)}
+                  style={s.btnOutline}
+                >
+                  {pageSelected ? "Deselectionner la page" : "Cette page"}
+                </button>
+              )}
+              <button
+                onClick={downloadSelectedZip}
+                style={{ ...s.btn, opacity: selected.size === 0 || downloading ? 0.5 : 1 }}
+                disabled={selected.size === 0 || !!downloading}
+              >
+                {downloading
+                  ? downloading.label
+                  : `Telecharger en ZIP (${selected.size})`}
+              </button>
+              {downloading ? (
+                <button
+                  onClick={() => { cancelDownload.current = true; }}
+                  style={s.btnOutline}
+                >
+                  Arreter
+                </button>
+              ) : (
+                selected.size > 0 && (
+                  <button onClick={downloadSelectedOneByOne} style={s.linkBtn}>
+                    ou un par un
+                  </button>
+                )
+              )}
             </>
           )}
           {showUpload && (
@@ -809,6 +998,23 @@ function Gallery({
           )}
         </div>
       </div>
+
+      {/* Progression du telechargement groupe */}
+      {downloading && (
+        <div style={s.progressWrap}>
+          <div style={s.progressTrack}>
+            <div
+              style={{
+                ...s.progressFill,
+                width: `${Math.round((downloading.done / Math.max(1, downloading.total)) * 100)}%`,
+              }}
+            />
+          </div>
+          <span style={s.progressText}>
+            {downloading.label} — gardez cette page ouverte
+          </span>
+        </div>
+      )}
 
       {/* Carte photographe (page dediee) */}
       {showPhotographerCard && <PhotographerCard />}
@@ -898,18 +1104,19 @@ function Gallery({
       <div className={`${GRID_CLASS} pg-${gridSize}`} style={s.grid}>
         {pagePhotos.map((photo, i) => {
           const globalIndex = page * perPage + i;
-          const isSelected = selected.has(photo.public_id);
+          const key = photoKey(photo);
+          const isSelected = selected.has(key);
           const pm = meta[photo.public_id];
           const reactTotal = pm
             ? Object.values(pm.reactions || {}).reduce((a, b) => a + (Number(b) || 0), 0)
             : 0;
           return (
             <div
-              key={`${photo.media}:${photo.public_id}`}
+              key={key}
               className="pg-thumb"
               style={{ ...s.gridItem, position: "relative", cursor: "pointer" }}
               onClick={() => {
-                if (selectMode) toggleSelect(photo.public_id);
+                if (selectMode) toggleSelect(key);
                 else setLightboxIndex(globalIndex);
               }}
             >
@@ -1093,6 +1300,26 @@ const s: Record<string, React.CSSProperties> = {
     padding: "10px 20px", fontSize: 15, fontWeight: 500,
     color: COLOR, background: "transparent", border: `1px solid ${COLOR}`, borderRadius: 8,
     cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
+  },
+  linkBtn: {
+    padding: "10px 4px", fontSize: 14, color: COLOR, background: "none",
+    border: "none", cursor: "pointer", fontFamily: FONT, opacity: 0.75,
+    textDecoration: "underline", textUnderlineOffset: 3, whiteSpace: "nowrap",
+  },
+
+  // Progression du telechargement groupe
+  progressWrap: {
+    display: "flex", flexDirection: "column", gap: 6, marginBottom: 16,
+  },
+  progressTrack: {
+    height: 6, borderRadius: 3, overflow: "hidden",
+    background: "rgba(65,97,29,0.18)",
+  },
+  progressFill: {
+    height: "100%", background: BTN_BG, transition: "width 0.2s",
+  },
+  progressText: {
+    fontSize: 13, color: COLOR, fontFamily: FONT, opacity: 0.8,
   },
 
   // Gallery
