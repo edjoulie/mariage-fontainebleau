@@ -1,7 +1,7 @@
 import { initPlasmicLoader } from "@plasmicapp/loader-nextjs";
-import { registerComponent } from "@plasmicapp/host";
+import { registerComponent, CodeComponentMeta } from "@plasmicapp/host";
 import LodgingCards from "./components/LodgingCards";
-import PhotoGallery from "./components/PhotoGallery";
+import PhotoGallery, { PhotoGalleryProps } from "./components/PhotoGallery";
 
 registerComponent(LodgingCards, {
   name: "LodgingCards",
@@ -9,10 +9,50 @@ registerComponent(LodgingCards, {
   props: {},
 });
 
+const photoGalleryProps: CodeComponentMeta<PhotoGalleryProps>["props"] = {
+  title: {
+    type: "string",
+    defaultValue: "Nos Photos",
+    description: "Titre affiché en haut de la galerie",
+  },
+  defaultFilter: {
+    type: "choice",
+    multiSelect: false,
+    options: [
+      { value: "all", label: "Toutes les photos" },
+      { value: "guests", label: "Photos des invités" },
+      { value: "pro", label: "Photos de la photographe" },
+    ],
+    defaultValue: "all",
+    description: "Filtre sélectionné à l'ouverture de la page",
+  },
+  showFilters: {
+    type: "boolean",
+    defaultValue: true,
+    description: "Afficher les puces Toutes / Invités / Photographe",
+  },
+  showPhotographerCard: {
+    type: "boolean",
+    defaultValue: false,
+    description: "Afficher le bloc coordonnées + lien vers la galerie Jingoo",
+  },
+  showUpload: {
+    type: "boolean",
+    defaultValue: true,
+    description: "Afficher le bouton « + Ajouter mes photos »",
+  },
+  photographerPageUrl: {
+    type: "string",
+    defaultValue: "/photographe",
+    description:
+      "Lien vers la page dédiée à la photographe (masqué si la carte est déjà affichée)",
+  },
+};
+
 registerComponent(PhotoGallery, {
   name: "PhotoGallery",
   importPath: "./components/PhotoGallery",
-  props: {},
+  props: photoGalleryProps,
 });
 
 export const PLASMIC = initPlasmicLoader({
@@ -33,5 +73,5 @@ PLASMIC.registerComponent(LodgingCards, {
 
 PLASMIC.registerComponent(PhotoGallery, {
   name: "PhotoGallery",
-  props: {},
+  props: photoGalleryProps,
 });

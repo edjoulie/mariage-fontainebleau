@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 
 // ─── Identifiants ───
@@ -9,8 +9,12 @@ const PASSWORD = "lavande2026";
 const CLOUD_NAME = "dxvypw2kn";
 const UPLOAD_PRESET = "mariage";
 const TAG = "mariage";
-const IMAGE_LIST_URL = `https://res.cloudinary.com/${CLOUD_NAME}/image/list/${TAG}.json`;
-const VIDEO_LIST_URL = `https://res.cloudinary.com/${CLOUD_NAME}/video/list/${TAG}.json`;
+// Tag a ajouter sur Cloudinary aux photos fournies par la photographe.
+// Uploadez-les avec les deux tags ("mariage" + "photographe") ; si le tag
+// "mariage" est oublie, elles apparaissent quand meme (les listes sont fusionnees).
+const PRO_TAG = "photographe";
+const listUrl = (kind: MediaType, tag: string) =>
+  `https://res.cloudinary.com/${CLOUD_NAME}/${kind}/list/${tag}.json`;
 const GRID_CLASS = "pg-photo-grid";
 const FONT = "'EB Garamond', serif";
 const BG = "#F6ECE3";
@@ -27,6 +31,48 @@ const GRID_SIZES: { key: GridSize; label: string }[] = [
   { key: "small", label: "Vignettes" },
 ];
 
+// ─── Filtres ───
+type PhotoFilter = "all" | "guests" | "pro";
+const FILTERS: { key: PhotoFilter; label: string }[] = [
+  { key: "all", label: "Toutes" },
+  { key: "guests", label: "Invités" },
+  { key: "pro", label: "📷 Photographe" },
+];
+
+// ─────────────────────────────────────────────────────────────────
+// ─── COORDONNEES DE LA PHOTOGRAPHE — A REMPLIR ───
+// Laissez une valeur vide ("") pour masquer la ligne correspondante.
+// ─────────────────────────────────────────────────────────────────
+const PHOTOGRAPHER = {
+  // Nom deduit des fichiers livres ("AstridetEdouardparAlineRuze-*.jpg") — a corriger si besoin.
+  name: "Aline Ruze",
+  role: "Photographe de mariage",
+  // Lien vers la galerie Jingoo qu'elle nous a transmise (bouton principal)
+  jingooUrl: "https://www.jingoo.com/client/key/686455/f35a3c1b/",
+  jingooLabel: "Voir la galerie complète en haute définition",
+  // Contact — laissez "" pour ne pas afficher
+  email: "",
+  phone: "",
+  website: "",
+  instagram: "", // ex. "@son_compte" ou une URL complete
+  // Texte libre affiche sous les coordonnees
+  blurb:
+    "Toutes les photos de cette sélection sont les siennes. " +
+    "Sa galerie complète est disponible en haute définition sur son site.",
+  printsNote:
+    "Tirages, albums et agrandissements peuvent être commandés directement auprès d'elle.",
+};
+
+// Normalise "@compte" ou "instagram.com/compte" en URL cliquable.
+function instagramUrl(handle: string): string {
+  if (/^https?:\/\//.test(handle)) return handle;
+  return `https://instagram.com/${handle.replace(/^@/, "")}`;
+}
+
+function externalUrl(url: string): string {
+  return /^https?:\/\//.test(url) ? url : `https://${url}`;
+}
+
 // ─── Types ───
 type MediaType = "image" | "video";
 
@@ -39,11 +85,14 @@ interface CloudinaryResource {
   type: string;
   created_at: string;
   media: MediaType;
+  isPro: boolean;
 }
 
+type CloudinaryRawResource = Omit<CloudinaryResource, "media" | "isPro">;
+
 interface CloudinaryListResponse {
-  resources: Omit<CloudinaryResource, "media">[];
-  updated_at: string;
+  resources: CloudinaryRawResource[];
+  updated_at?: string;
 }
 
 declare global {
@@ -466,8 +515,66 @@ function Lightbox({
   );
 }
 
+// ─── Carte photographe ───
+// Bloc de mise en avant : coordonnees + lien vers sa galerie Jingoo.
+function PhotographerCard() {
+  const p = PHOTOGRAPHER;
+  const contacts: { href: string; label: string }[] = [];
+  if (p.website) contacts.push({ href: externalUrl(p.website), label: "Son site" });
+  if (p.instagram) contacts.push({ href: instagramUrl(p.instagram), label: "Instagram" });
+  if (p.email) contacts.push({ href: `mailto:${p.email}`, label: p.email });
+  if (p.phone) contacts.push({ href: `tel:${p.phone.replace(/\s/g, "")}`, label: p.phone });
+
+  return (
+    <div style={s.proCard}>
+      <div style={s.proCardHead}>
+        <span style={s.proCardRole}>{p.role}</span>
+        <h3 style={s.proCardName}>{p.name}</h3>
+      </div>
+
+      {p.blurb && <p style={s.proCardText}>{p.blurb}</p>}
+
+      {p.jingooUrl && (
+        <a
+          href={externalUrl(p.jingooUrl)}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={s.proCardCta}
+        >
+          {p.jingooLabel || "Voir sa galerie"} &#8599;
+        </a>
+      )}
+
+      {contacts.length > 0 && (
+        <div style={s.proCardLinks}>
+          {contacts.map((c) => (
+            <a
+              key={c.href}
+              href={c.href}
+              target={c.href.startsWith("http") ? "_blank" : undefined}
+              rel="noopener noreferrer"
+              style={s.proCardLink}
+            >
+              {c.label}
+            </a>
+          ))}
+        </div>
+      )}
+
+      {p.printsNote && <p style={s.proCardNote}>{p.printsNote}</p>}
+    </div>
+  );
+}
+
 // ─── Gallery ───
-function Gallery() {
+function Gallery({
+  title,
+  defaultFilter,
+  showFilters,
+  showPhotographerCard,
+  showUpload,
+  photographerPageUrl,
+}: Required<PhotoGalleryProps>) {
   const [photos, setPhotos] = useState<CloudinaryResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [perPage, setPerPage] = useState(PER_PAGE_OPTIONS[0]);
@@ -477,11 +584,35 @@ function Gallery() {
   const [selectMode, setSelectMode] = useState(false);
   const [gridSize, setGridSize] = useState<GridSize>("large");
   const [meta, setMeta] = useState<Record<string, PhotoMeta>>({});
+  const [filter, setFilter] = useState<PhotoFilter>(defaultFilter);
   const scriptLoaded = useRef(false);
 
-  const totalPages = Math.ceil(photos.length / perPage);
-  const pagePhotos = photos.slice(page * perPage, (page + 1) * perPage);
+  const proCount = photos.filter((p) => p.isPro).length;
+  const counts: Record<PhotoFilter, number> = {
+    all: photos.length,
+    guests: photos.length - proCount,
+    pro: proCount,
+  };
+
+  const filteredPhotos = useMemo(() => {
+    if (filter === "all") return photos;
+    const subset = photos.filter((p) => (filter === "pro" ? p.isPro : !p.isPro));
+    if (filter !== "pro") return subset;
+    // Les photos de la photographe sont numerotees dans l'ordre de la journee
+    // ("…-100", "…-101"…). Comme elles sont toutes envoyees en une fois, leur
+    // date d'upload ne distingue rien : on trie sur ce numero pour retrouver
+    // le deroule du mariage. Le tri numerique evite que "-99" passe apres "-100".
+    return [...subset].sort((a, b) =>
+      a.public_id.localeCompare(b.public_id, "fr", { numeric: true })
+    );
+  }, [photos, filter]);
+
+  const totalPages = Math.ceil(filteredPhotos.length / perPage);
+  const pagePhotos = filteredPhotos.slice(page * perPage, (page + 1) * perPage);
   const pageIdsKey = pagePhotos.map((p) => p.public_id).join(",");
+
+  // Revient a la premiere page quand on change de filtre.
+  useEffect(() => { setPage(0); }, [filter]);
 
   // Resume reactions/commentaires pour les vignettes de la page courante.
   const fetchMeta = useCallback(() => {
@@ -502,17 +633,41 @@ function Gallery() {
   const fetchPhotos = useCallback(async () => {
     try {
       const ts = Date.now();
-      const [imgRes, vidRes]: CloudinaryListResponse[] = await Promise.all([
-        fetch(`${IMAGE_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
-        fetch(`${VIDEO_LIST_URL}?${ts}`).then(r => r.ok ? r.json() : { resources: [] }),
+      // Une liste Cloudinary par (type de media x tag). Le tag "photographe"
+      // peut ne pas exister encore : on tolere l'echec liste par liste.
+      const fetchList = (kind: MediaType, tag: string): Promise<CloudinaryListResponse> =>
+        fetch(`${listUrl(kind, tag)}?${ts}`)
+          .then((r) => (r.ok ? r.json() : { resources: [] }))
+          .catch(() => ({ resources: [] }));
+
+      const [imgRes, vidRes, proImgRes, proVidRes] = await Promise.all([
+        fetchList("image", TAG),
+        fetchList("video", TAG),
+        fetchList("image", PRO_TAG),
+        fetchList("video", PRO_TAG),
       ]);
-      const images: CloudinaryResource[] = (imgRes.resources || []).map(
-        (r) => ({ ...r, media: "image" as const })
-      );
-      const videos: CloudinaryResource[] = (vidRes.resources || []).map(
-        (r) => ({ ...r, media: "video" as const })
-      );
-      const all = [...images, ...videos].sort(
+
+      const proIds: Record<MediaType, Set<string>> = {
+        image: new Set((proImgRes.resources || []).map((r) => r.public_id)),
+        video: new Set((proVidRes.resources || []).map((r) => r.public_id)),
+      };
+
+      // Fusion des listes "mariage" et "photographe" (une photo pro peut
+      // porter les deux tags), dedoublonnee par type + public_id.
+      const byKey = new Map<string, CloudinaryResource>();
+      const collect = (resources: CloudinaryRawResource[] | undefined, media: MediaType) => {
+        (resources || []).forEach((r) => {
+          const key = `${media}:${r.public_id}`;
+          if (byKey.has(key)) return;
+          byKey.set(key, { ...r, media, isPro: proIds[media].has(r.public_id) });
+        });
+      };
+      collect(imgRes.resources, "image");
+      collect(proImgRes.resources, "image");
+      collect(vidRes.resources, "video");
+      collect(proVidRes.resources, "video");
+
+      const all = Array.from(byKey.values()).sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       setPhotos(all);
@@ -628,7 +783,7 @@ function Gallery() {
     <div style={s.container}>
       {/* Header */}
       <div style={s.header}>
-        <h2 style={s.title}>Nos Photos</h2>
+        <h2 style={s.title}>{title}</h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {!selectMode && (
             <button onClick={() => setSelectMode(true)} style={s.btnOutline}>
@@ -647,16 +802,49 @@ function Gallery() {
               </button>
             </>
           )}
-          <button onClick={openUploadWidget} style={s.btn}>
-            + Ajouter mes photos
-          </button>
+          {showUpload && (
+            <button onClick={openUploadWidget} style={s.btn}>
+              + Ajouter mes photos
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Carte photographe (page dediee) */}
+      {showPhotographerCard && <PhotographerCard />}
+
+      {/* Filtre par tag : toutes / invites / photographe */}
+      {showFilters && (
+        <div style={s.filterBar}>
+          <div style={s.filterChips}>
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                style={{
+                  ...s.filterChip,
+                  background: filter === f.key ? BTN_BG : "transparent",
+                  color: filter === f.key ? "#fff" : COLOR,
+                }}
+                aria-pressed={filter === f.key}
+              >
+                {f.label}
+                {!loading && <span style={s.filterChipCount}>{counts[f.key]}</span>}
+              </button>
+            ))}
+          </div>
+          {!showPhotographerCard && photographerPageUrl && (
+            <a href={photographerPageUrl} style={s.proLink}>
+              À propos de la photographe &#8250;
+            </a>
+          )}
+        </div>
+      )}
 
       {/* Per page selector */}
       <div style={s.toolbar}>
         <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>
-          {photos.length} photo{photos.length !== 1 ? "s" : ""}
+          {filteredPhotos.length} photo{filteredPhotos.length !== 1 ? "s" : ""}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -696,8 +884,14 @@ function Gallery() {
 
       {loading && <p style={s.loadingText}>Chargement...</p>}
 
-      {!loading && photos.length === 0 && (
-        <p style={s.emptyText}>Aucune photo pour le moment. Soyez le premier a en ajouter !</p>
+      {!loading && filteredPhotos.length === 0 && (
+        <p style={s.emptyText}>
+          {photos.length === 0
+            ? "Aucune photo pour le moment. Soyez le premier a en ajouter !"
+            : filter === "pro"
+            ? "Les photos de la photographe arrivent bientôt."
+            : "Aucune photo dans cette sélection."}
+        </p>
       )}
 
       {/* Grid */}
@@ -711,7 +905,7 @@ function Gallery() {
             : 0;
           return (
             <div
-              key={photo.public_id}
+              key={`${photo.media}:${photo.public_id}`}
               className="pg-thumb"
               style={{ ...s.gridItem, position: "relative", cursor: "pointer" }}
               onClick={() => {
@@ -724,6 +918,9 @@ function Gallery() {
                   {reactTotal > 0 && <span>&#10084;&#65039; {reactTotal}</span>}
                   {pm && pm.comments > 0 && <span>&#128172; {pm.comments}</span>}
                 </div>
+              )}
+              {!selectMode && photo.isPro && filter === "all" && (
+                <div style={s.proBadge} title="Photo de la photographe">&#128247;</div>
               )}
               {selectMode && (
                 <div style={{
@@ -782,13 +979,13 @@ function Gallery() {
       )}
 
       {/* Lightbox */}
-      {lightboxIndex !== null && (
+      {lightboxIndex !== null && filteredPhotos.length > 0 && (
         <Lightbox
-          photos={photos}
-          index={lightboxIndex}
+          photos={filteredPhotos}
+          index={Math.min(lightboxIndex, filteredPhotos.length - 1)}
           onClose={() => { setLightboxIndex(null); fetchMeta(); }}
-          onPrev={() => setLightboxIndex((i) => (i! > 0 ? i! - 1 : photos.length - 1))}
-          onNext={() => setLightboxIndex((i) => (i! < photos.length - 1 ? i! + 1 : 0))}
+          onPrev={() => setLightboxIndex((i) => (i! > 0 ? i! - 1 : filteredPhotos.length - 1))}
+          onNext={() => setLightboxIndex((i) => (i! < filteredPhotos.length - 1 ? i! + 1 : 0))}
         />
       )}
     </div>
@@ -796,7 +993,29 @@ function Gallery() {
 }
 
 // ─── Main Component ───
-export default function PhotoGallery() {
+export interface PhotoGalleryProps {
+  /** Titre affiche en haut de la galerie. */
+  title?: string;
+  /** Filtre selectionne a l'ouverture ("all" | "guests" | "pro"). */
+  defaultFilter?: PhotoFilter;
+  /** Affiche les puces de filtre Toutes / Invites / Photographe. */
+  showFilters?: boolean;
+  /** Affiche le bloc coordonnees + lien Jingoo de la photographe. */
+  showPhotographerCard?: boolean;
+  /** Affiche le bouton "+ Ajouter mes photos". */
+  showUpload?: boolean;
+  /** Lien vers la page dediee a la photographe (masque si la carte est deja affichee). */
+  photographerPageUrl?: string;
+}
+
+export default function PhotoGallery({
+  title = "Nos Photos",
+  defaultFilter = "all",
+  showFilters = true,
+  showPhotographerCard = false,
+  showUpload = true,
+  photographerPageUrl = "/photographe",
+}: PhotoGalleryProps) {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
@@ -816,7 +1035,16 @@ export default function PhotoGallery() {
     return <LoginScreen onSuccess={() => setAuthed(true)} />;
   }
 
-  return <Gallery />;
+  return (
+    <Gallery
+      title={title}
+      defaultFilter={defaultFilter}
+      showFilters={showFilters}
+      showPhotographerCard={showPhotographerCard}
+      showUpload={showUpload}
+      photographerPageUrl={photographerPageUrl}
+    />
+  );
 }
 
 // ─── Styles ───
@@ -887,6 +1115,72 @@ const s: Record<string, React.CSSProperties> = {
     padding: "4px 12px", fontSize: 14, fontFamily: FONT,
     border: `1px solid ${COLOR}`, borderRadius: 20, cursor: "pointer",
     background: "transparent", color: COLOR,
+  },
+
+  // Barre de filtres (Toutes / Invites / Photographe)
+  filterBar: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    flexWrap: "wrap", gap: 10, marginBottom: 14,
+    paddingBottom: 12, borderBottom: "1px solid rgba(65,97,29,0.18)",
+  },
+  filterChips: {
+    display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+  },
+  filterChip: {
+    display: "inline-flex", alignItems: "center", gap: 7,
+    padding: "7px 16px", fontSize: 15, fontFamily: FONT,
+    border: `1px solid ${COLOR}`, borderRadius: 22, cursor: "pointer",
+    background: "transparent", color: COLOR, lineHeight: 1.2,
+  },
+  filterChipCount: {
+    fontSize: 12, opacity: 0.7, fontVariantNumeric: "tabular-nums",
+  },
+  proLink: {
+    color: COLOR, fontFamily: FONT, fontSize: 14,
+    textDecoration: "underline", textUnderlineOffset: 3, whiteSpace: "nowrap",
+  },
+
+  // Carte photographe
+  proCard: {
+    marginBottom: 20, padding: "20px 22px", borderRadius: 12,
+    background: "#fff", border: "1px solid rgba(65,97,29,0.22)",
+    fontFamily: FONT, color: COLOR,
+    display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12,
+  },
+  proCardHead: {
+    display: "flex", flexDirection: "column", gap: 2,
+  },
+  proCardRole: {
+    fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.65,
+  },
+  proCardName: {
+    margin: 0, fontSize: 24, fontWeight: 600, fontFamily: FONT, color: COLOR,
+  },
+  proCardText: {
+    margin: 0, fontSize: 15, lineHeight: 1.55, opacity: 0.9, maxWidth: 620,
+  },
+  proCardCta: {
+    display: "inline-block", padding: "10px 20px", borderRadius: 8,
+    background: BTN_BG, color: "#fff", textDecoration: "none",
+    fontSize: 15, fontWeight: 500, fontFamily: FONT,
+  },
+  proCardLinks: {
+    display: "flex", gap: 16, flexWrap: "wrap",
+  },
+  proCardLink: {
+    color: COLOR, fontSize: 14, fontFamily: FONT,
+    textDecoration: "underline", textUnderlineOffset: 3,
+  },
+  proCardNote: {
+    margin: 0, fontSize: 13, lineHeight: 1.5, opacity: 0.7,
+    fontStyle: "italic", maxWidth: 620,
+  },
+  proBadge: {
+    position: "absolute", top: 6, left: 6, zIndex: 2,
+    width: 24, height: 24, borderRadius: 12,
+    background: "rgba(0,0,0,0.5)", color: "#fff",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 12, pointerEvents: "none",
   },
   loadingText: {
     textAlign: "center", color: COLOR, fontSize: 15, fontFamily: FONT, opacity: 0.6,
