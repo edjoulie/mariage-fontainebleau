@@ -1041,7 +1041,7 @@ function Gallery({
           </div>
           {!showPhotographerCard && photographerPageUrl && (
             <a href={photographerPageUrl} style={s.proLink}>
-              À propos de la photographe &#8250;
+              À propos de la photographe + lien vers les photos haute définition &#8250;
             </a>
           )}
         </div>
