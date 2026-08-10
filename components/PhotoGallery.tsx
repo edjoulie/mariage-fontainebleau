@@ -649,6 +649,11 @@ function Gallery({
     );
   }, [photos, filter]);
 
+  // La carte de la photographe s'affiche aussi des qu'on filtre sur ses photos :
+  // c'est a ce moment qu'on veut ses coordonnees et le lien vers sa galerie
+  // haute definition, sans avoir a passer par la page dediee.
+  const photographerCardVisible = showPhotographerCard || filter === "pro";
+
   const totalPages = Math.ceil(filteredPhotos.length / perPage);
   const pagePhotos = filteredPhotos.slice(page * perPage, (page + 1) * perPage);
   const pageIdsKey = pagePhotos.map((p) => p.public_id).join(",");
@@ -1016,8 +1021,8 @@ function Gallery({
         </div>
       )}
 
-      {/* Carte photographe (page dediee) */}
-      {showPhotographerCard && <PhotographerCard />}
+      {/* Carte photographe : page dediee, ou des qu'on filtre sur ses photos */}
+      {photographerCardVisible && <PhotographerCard />}
 
       {/* Filtre par tag : toutes / invites / photographe */}
       {showFilters && (
@@ -1039,7 +1044,7 @@ function Gallery({
               </button>
             ))}
           </div>
-          {!showPhotographerCard && photographerPageUrl && (
+          {!photographerCardVisible && photographerPageUrl && (
             <a href={photographerPageUrl} style={s.proLink}>
               À propos de la photographe + lien vers les photos haute définition &#8250;
             </a>
