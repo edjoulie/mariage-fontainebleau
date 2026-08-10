@@ -40,8 +40,11 @@ export const getStaticProps: GetStaticProps = async (context) => {
   const plasmicPath = typeof catchall === 'string' ? catchall : Array.isArray(catchall) ? `/${catchall.join('/')}` : '/';
   const plasmicData = await PLASMIC.maybeFetchComponentData(plasmicPath);
   if (!plasmicData) {
-    // non-Plasmic catch-all
-    return { props: {} };
+    // Aucune page Plasmic a ce chemin : on rend le 404, mais avec revalidation.
+    // Sans `revalidate`, Next figerait ce 404 en cache jusqu'au prochain
+    // deploiement, et une page publiee ensuite dans Plasmic resterait
+    // introuvable.
+    return { props: {}, revalidate: 60 };
   }
   const pageMeta = plasmicData.entryCompMetas[0];
   // Cache the necessary data fetched for the page
