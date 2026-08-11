@@ -23,6 +23,7 @@ const photoGalleryProps: CodeComponentMeta<PhotoGalleryProps>["props"] = {
       { value: "guests", label: "Photos des invités" },
       { value: "pro", label: "Photos de la photographe" },
       { value: "booth", label: "Photos du photobooth" },
+      { value: "videos", label: "Vidéos" },
     ],
     defaultValue: "all",
     description: "Filtre sélectionné à l'ouverture de la page",
@@ -30,7 +31,7 @@ const photoGalleryProps: CodeComponentMeta<PhotoGalleryProps>["props"] = {
   showFilters: {
     type: "boolean",
     defaultValue: true,
-    description: "Afficher les puces Toutes / Invités / Photographe / Photobooth",
+    description: "Afficher les puces Toutes / Invités / Photographe / Photobooth / Vidéos",
   },
   showPhotographerCard: {
     type: "boolean",

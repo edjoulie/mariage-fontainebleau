@@ -15,6 +15,8 @@ const TAG = "mariage";
 // ressources, donc chaque lot a sa propre liste et la galerie les fusionne.
 const PRO_TAG = "photographe";
 const BOOTH_TAG = "photobooth";
+// Le film du mariage, mis en avant en tete du filtre "Videos".
+const FILM_TAG = "film";
 const listUrl = (kind: MediaType, tag: string) =>
   `https://res.cloudinary.com/${CLOUD_NAME}/${kind}/list/${tag}.json`;
 const GRID_CLASS = "pg-photo-grid";
@@ -40,23 +42,29 @@ const GRID_SIZES: { key: GridSize; label: string }[] = [
 ];
 
 // ─── Filtres ───
-// L'origine d'une photo : invites (upload depuis le site), photographe, photobooth.
-type PhotoSource = "guests" | "pro" | "booth";
-type PhotoFilter = "all" | PhotoSource;
+// L'origine d'un media : invites (upload depuis le site), photographe,
+// photobooth, et le film du mariage.
+type PhotoSource = "guests" | "pro" | "booth" | "film";
+// "videos" n'est pas une origine mais une selection par type de media : le film
+// puis toutes les videos des invites, quelle que soit leur provenance.
+type PhotoFilter = "all" | PhotoSource | "videos";
 const FILTERS: { key: PhotoFilter; label: string }[] = [
   { key: "all", label: "Toutes" },
   { key: "guests", label: "Invités" },
   { key: "pro", label: "📷 Photographe" },
   { key: "booth", label: "📸 Photobooth" },
+  { key: "videos", label: "🎬 Vidéos" },
 ];
-// Ordre des lots dans la vue "Toutes" : la photographe a couvert la journee
-// entiere, les invites viennent ensuite, le photobooth ferme la soiree.
-const SOURCE_ORDER: PhotoSource[] = ["pro", "guests", "booth"];
+// Ordre des lots dans la vue "Toutes" : le film ouvre la galerie, la
+// photographe a couvert la journee entiere, les invites viennent ensuite, le
+// photobooth ferme la soiree.
+const SOURCE_ORDER: PhotoSource[] = ["film", "pro", "guests", "booth"];
 // Pastille discrete sur les vignettes en vue "Toutes", pour situer l'origine.
 const SOURCE_BADGE: Record<PhotoSource, { icon: string; title: string } | null> = {
   guests: null,
   pro: { icon: "\u{1F4F7}", title: "Photo de la photographe" },
   booth: { icon: "\u{1F4F8}", title: "Photo du photobooth" },
+  film: { icon: "\u{1F3AC}", title: "Le film du mariage" },
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -86,20 +94,38 @@ const PHOTOGRAPHER = {
 };
 
 // ─────────────────────────────────────────────────────────────────
-// ─── PHOTOBOOTH ───
-// Les photos du photobooth, fournies par le DJ. Comme pour la photographe,
-// ce qui est affiche ici est une version reduite pour le web ; les fichiers
-// d'origine restent sur le Drive partage.
+// ─── LOTS FOURNIS PAR DES TIERS ───
+// Photobooth et film : comme pour la photographe, ce qui est affiche ici est
+// une version reduite pour le web, et l'original reste sur le Drive partage.
 // ─────────────────────────────────────────────────────────────────
-const BOOTH = {
+interface LotInfo {
+  role: string;
+  title: string;
+  blurb: string;
+  url: string;
+  label: string;
+}
+
+const BOOTH: LotInfo = {
+  role: "Soirée",
   title: "Le photobooth",
   blurb:
     "Les photos prises au photobooth pendant la soirée. " +
     "Elles sont affichées ici en version web ; les fichiers d'origine, " +
     "en pleine définition, sont sur le Drive partagé.",
-  driveUrl:
-    "https://drive.google.com/drive/folders/1x9MARbTwZ96q1d-xLymYmlXPP2dk9TAs?usp=sharing",
-  driveLabel: "Ouvrir le dossier Drive des originaux",
+  url: "https://drive.google.com/drive/folders/1x9MARbTwZ96q1d-xLymYmlXPP2dk9TAs?usp=sharing",
+  label: "Ouvrir le dossier Drive des originaux",
+};
+
+const FILM: LotInfo = {
+  role: "Le film",
+  title: "Astrid & Édouard",
+  blurb:
+    "Le film du mariage, huit minutes. Il est affiché ici dans une version " +
+    "allégée pour se lancer vite, même en 4G ; l'original en pleine qualité " +
+    "est sur le Drive.",
+  url: "https://drive.google.com/file/d/1CHAkmC5pYf_llYXmGZDzORAXq_DB6WVN/view",
+  label: "Voir le film en pleine qualité",
 };
 
 // Normalise "@compte" ou "instagram.com/compte" en URL cliquable.
@@ -165,8 +191,17 @@ function videoThumbUrl(publicId: string, width: number): string {
   return `https://res.cloudinary.com/${CLOUD_NAME}/video/upload/c_fill,w_${width},q_auto,f_jpg,so_1/${publicId}.jpg`;
 }
 
-function videoUrl(publicId: string): string {
-  return `https://res.cloudinary.com/${CLOUD_NAME}/video/upload/q_auto/${publicId}`;
+function videoUrl(photo: CloudinaryResource): string {
+  const base = `https://res.cloudinary.com/${CLOUD_NAME}/video/upload`;
+  // Le film est deja encode pour le web (1080p, 1,6 Mbps, index en tete du
+  // fichier) : on sert le fichier tel quel. La transformation q_auto le
+  // reencoderait pour rien, et tant qu'elle n'est pas en cache Cloudinary
+  // ignore les requetes par plage — la lecture ne demarre qu'apres une longue
+  // attente et la barre de progression ne repond pas.
+  if (photo.source === "film") return `${base}/${photo.public_id}.${photo.format}`;
+  // Les videos des invites arrivent brutes du telephone : la transformation
+  // vaut son cout pour elles.
+  return `${base}/q_auto/${photo.public_id}`;
 }
 
 function downloadUrl(publicId: string, format: string, media: MediaType): string {
@@ -210,6 +245,14 @@ function compareWithinSource(a: CloudinaryResource, b: CloudinaryResource): numb
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
   }
   return a.public_id.localeCompare(b.public_id, "fr", { numeric: true });
+}
+
+// Ordre commun a la vue "Toutes" et au filtre "Videos" : les lots se suivent,
+// chacun dans l'ordre de la journee. On ne melange pas par date d'upload, qui
+// remonterait le dernier lot envoye en tete et casserait le deroule.
+function byLotThenDay(a: CloudinaryResource, b: CloudinaryResource): number {
+  const rank = SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source);
+  return rank !== 0 ? rank : compareWithinSource(a, b);
 }
 
 // Cle de selection : une image et une video peuvent partager le meme public_id.
@@ -534,7 +577,7 @@ function Lightbox({
 
         {photo.media === "video" ? (
           <video
-            src={videoUrl(photo.public_id)}
+            src={videoUrl(photo)}
             controls
             autoPlay
             playsInline
@@ -647,27 +690,26 @@ function PhotographerCard() {
   );
 }
 
-// ─── Carte photobooth ───
+// ─── Carte d'un lot (photobooth, film) ───
 // Meme role que la carte de la photographe : dire ou sont les originaux.
-function BoothCard() {
-  const b = BOOTH;
+function LotCard({ lot }: { lot: LotInfo }) {
   return (
     <div style={s.proCard}>
       <div style={s.proCardHead}>
-        <span style={s.proCardRole}>Soirée</span>
-        <h3 style={s.proCardName}>{b.title}</h3>
+        <span style={s.proCardRole}>{lot.role}</span>
+        <h3 style={s.proCardName}>{lot.title}</h3>
       </div>
 
-      {b.blurb && <p style={s.proCardText}>{b.blurb}</p>}
+      {lot.blurb && <p style={s.proCardText}>{lot.blurb}</p>}
 
-      {b.driveUrl && (
+      {lot.url && (
         <a
-          href={externalUrl(b.driveUrl)}
+          href={externalUrl(lot.url)}
           target="_blank"
           rel="noopener noreferrer"
           style={s.proCardCta}
         >
-          {b.driveLabel || "Voir les originaux"} &#8599;
+          {lot.label || "Voir les originaux"} &#8599;
         </a>
       )}
     </div>
@@ -704,17 +746,16 @@ function Gallery({
     guests: photos.filter((p) => p.source === "guests").length,
     pro: photos.filter((p) => p.source === "pro").length,
     booth: photos.filter((p) => p.source === "booth").length,
+    film: photos.filter((p) => p.source === "film").length,
+    videos: photos.filter((p) => p.media === "video").length,
   };
 
   const filteredPhotos = useMemo(() => {
-    // Vue "Toutes" : les trois lots se suivent, chacun dans l'ordre de la
-    // journee. On ne melange pas par date d'upload, qui remonterait le dernier
-    // lot envoye en tete et casserait le deroule.
-    if (filter === "all") {
-      return [...photos].sort((a, b) => {
-        const rank = SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source);
-        return rank !== 0 ? rank : compareWithinSource(a, b);
-      });
+    if (filter === "all") return [...photos].sort(byLotThenDay);
+    // "Videos" traverse les lots : le film d'abord (premier dans SOURCE_ORDER),
+    // puis les videos des invites dans l'ordre ou elles ont ete envoyees.
+    if (filter === "videos") {
+      return photos.filter((p) => p.media === "video").sort(byLotThenDay);
     }
     const subset = photos.filter((p) => p.source === filter);
     // Les photos des invites gardent l'ordre de `photos`, le plus recent en
@@ -722,6 +763,15 @@ function Gallery({
     if (filter === "guests") return subset;
     return [...subset].sort(compareWithinSource);
   }, [photos, filter]);
+
+  // Carte du lot mise en avant selon le filtre courant, s'il y en a une.
+  const lotCard: LotInfo | null =
+    filter === "booth"
+      ? BOOTH
+      : filter === "videos" || filter === "film"
+      ? FILM
+      : null;
+  const lotCardVisible = lotCard !== null;
 
   // La carte de la photographe s'affiche aussi des qu'on filtre sur ses photos :
   // c'est a ce moment qu'on veut ses coordonnees et le lien vers sa galerie
@@ -761,15 +811,23 @@ function Gallery({
           .then((r) => (r.ok ? r.json() : { resources: [] }))
           .catch(() => ({ resources: [] }));
 
-      const [imgRes, vidRes, proImgRes, proVidRes, boothImgRes, boothVidRes] =
-        await Promise.all([
-          fetchList("image", TAG),
-          fetchList("video", TAG),
-          fetchList("image", PRO_TAG),
-          fetchList("video", PRO_TAG),
-          fetchList("image", BOOTH_TAG),
-          fetchList("video", BOOTH_TAG),
-        ]);
+      const [
+        imgRes,
+        vidRes,
+        proImgRes,
+        proVidRes,
+        boothImgRes,
+        boothVidRes,
+        filmRes,
+      ] = await Promise.all([
+        fetchList("image", TAG),
+        fetchList("video", TAG),
+        fetchList("image", PRO_TAG),
+        fetchList("video", PRO_TAG),
+        fetchList("image", BOOTH_TAG),
+        fetchList("video", BOOTH_TAG),
+        fetchList("video", FILM_TAG),
+      ]);
 
       // Fusion des trois listes, dedoublonnee par type + public_id : une photo
       // peut porter plusieurs tags, la premiere origine rencontree l'emporte.
@@ -787,6 +845,7 @@ function Gallery({
           byKey.set(key, { ...r, media, source });
         });
       };
+      collect(filmRes.resources, "video", "film");
       collect(proImgRes.resources, "image", "pro");
       collect(proVidRes.resources, "video", "pro");
       collect(boothImgRes.resources, "image", "booth");
@@ -1104,8 +1163,8 @@ function Gallery({
       {/* Carte photographe : page dediee, ou des qu'on filtre sur ses photos */}
       {photographerCardVisible && <PhotographerCard />}
 
-      {/* Carte photobooth : lien vers les originaux, quand on filtre dessus */}
-      {filter === "booth" && <BoothCard />}
+      {/* Carte du lot : lien vers les originaux, quand on filtre dessus */}
+      {lotCard && <LotCard lot={lotCard} />}
 
       {/* Filtre par tag : toutes / invites / photographe */}
       {showFilters && (
@@ -1128,8 +1187,8 @@ function Gallery({
             ))}
           </div>
           {/* Une seule mise en avant a la fois : pas le lien photographe
-              quand la carte photobooth occupe deja le haut de page. */}
-          {!photographerCardVisible && filter !== "booth" && photographerPageUrl && (
+              quand la carte d'un autre lot occupe deja le haut de page. */}
+          {!photographerCardVisible && !lotCardVisible && photographerPageUrl && (
             <a href={photographerPageUrl} style={s.proLink}>
               À propos de la photographe + lien vers les photos haute définition &#8250;
             </a>
@@ -1140,7 +1199,10 @@ function Gallery({
       {/* Per page selector */}
       <div style={s.toolbar}>
         <span style={{ color: COLOR, fontFamily: FONT, fontSize: 14 }}>
-          {filteredPhotos.length} photo{filteredPhotos.length !== 1 ? "s" : ""}
+          {/* Le filtre "Videos" ne contient aucune photo : le compteur le dit. */}
+          {filteredPhotos.length}{" "}
+          {filter === "videos" || filter === "film" ? "vidéo" : "photo"}
+          {filteredPhotos.length !== 1 ? "s" : ""}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1188,6 +1250,8 @@ function Gallery({
             ? "Les photos de la photographe arrivent bientôt."
             : filter === "booth"
             ? "Les photos du photobooth arrivent bientôt."
+            : filter === "videos" || filter === "film"
+            ? "Les vidéos arrivent bientôt."
             : "Aucune photo dans cette sélection."}
         </p>
       )}
