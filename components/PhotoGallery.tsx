@@ -10,10 +10,11 @@ const PASSWORD = "lavande2026";
 const CLOUD_NAME = "dxvypw2kn";
 const UPLOAD_PRESET = "mariage";
 const TAG = "mariage";
-// Tag a ajouter sur Cloudinary aux photos fournies par la photographe.
-// Uploadez-les avec les deux tags ("mariage" + "photographe") ; si le tag
-// "mariage" est oublie, elles apparaissent quand meme (les listes sont fusionnees).
+// Tags des lots fournis par des tiers, chacun envoye avec scripts/prepare-photos.sh.
+// Ils ne portent PAS le tag "mariage" : l'endpoint list/{tag}.json plafonne a 1000
+// ressources, donc chaque lot a sa propre liste et la galerie les fusionne.
 const PRO_TAG = "photographe";
+const BOOTH_TAG = "photobooth";
 const listUrl = (kind: MediaType, tag: string) =>
   `https://res.cloudinary.com/${CLOUD_NAME}/${kind}/list/${tag}.json`;
 const GRID_CLASS = "pg-photo-grid";
@@ -39,12 +40,21 @@ const GRID_SIZES: { key: GridSize; label: string }[] = [
 ];
 
 // ─── Filtres ───
-type PhotoFilter = "all" | "guests" | "pro";
+// L'origine d'une photo : invites (upload depuis le site), photographe, photobooth.
+type PhotoSource = "guests" | "pro" | "booth";
+type PhotoFilter = "all" | PhotoSource;
 const FILTERS: { key: PhotoFilter; label: string }[] = [
   { key: "all", label: "Toutes" },
   { key: "guests", label: "Invités" },
   { key: "pro", label: "📷 Photographe" },
+  { key: "booth", label: "📸 Photobooth" },
 ];
+// Pastille discrete sur les vignettes en vue "Toutes", pour situer l'origine.
+const SOURCE_BADGE: Record<PhotoSource, { icon: string; title: string } | null> = {
+  guests: null,
+  pro: { icon: "\u{1F4F7}", title: "Photo de la photographe" },
+  booth: { icon: "\u{1F4F8}", title: "Photo du photobooth" },
+};
 
 // ─────────────────────────────────────────────────────────────────
 // ─── COORDONNEES DE LA PHOTOGRAPHE — A REMPLIR ───
@@ -72,6 +82,23 @@ const PHOTOGRAPHER = {
     "Tirages, albums et agrandissements peuvent être commandés directement auprès d'elle.",
 };
 
+// ─────────────────────────────────────────────────────────────────
+// ─── PHOTOBOOTH ───
+// Les photos du photobooth, fournies par le DJ. Comme pour la photographe,
+// ce qui est affiche ici est une version reduite pour le web ; les fichiers
+// d'origine restent sur le Drive partage.
+// ─────────────────────────────────────────────────────────────────
+const BOOTH = {
+  title: "Le photobooth",
+  blurb:
+    "Les photos prises au photobooth pendant la soirée. " +
+    "Elles sont affichées ici en version web ; les fichiers d'origine, " +
+    "en pleine définition, sont sur le Drive partagé.",
+  driveUrl:
+    "https://drive.google.com/drive/folders/1x9MARbTwZ96q1d-xLymYmlXPP2dk9TAs?usp=sharing",
+  driveLabel: "Ouvrir le dossier Drive des originaux",
+};
+
 // Normalise "@compte" ou "instagram.com/compte" en URL cliquable.
 function instagramUrl(handle: string): string {
   if (/^https?:\/\//.test(handle)) return handle;
@@ -94,10 +121,10 @@ interface CloudinaryResource {
   type: string;
   created_at: string;
   media: MediaType;
-  isPro: boolean;
+  source: PhotoSource;
 }
 
-type CloudinaryRawResource = Omit<CloudinaryResource, "media" | "isPro">;
+type CloudinaryRawResource = Omit<CloudinaryResource, "media" | "source">;
 
 interface CloudinaryListResponse {
   resources: CloudinaryRawResource[];
@@ -604,6 +631,33 @@ function PhotographerCard() {
   );
 }
 
+// ─── Carte photobooth ───
+// Meme role que la carte de la photographe : dire ou sont les originaux.
+function BoothCard() {
+  const b = BOOTH;
+  return (
+    <div style={s.proCard}>
+      <div style={s.proCardHead}>
+        <span style={s.proCardRole}>Soirée</span>
+        <h3 style={s.proCardName}>{b.title}</h3>
+      </div>
+
+      {b.blurb && <p style={s.proCardText}>{b.blurb}</p>}
+
+      {b.driveUrl && (
+        <a
+          href={externalUrl(b.driveUrl)}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={s.proCardCta}
+        >
+          {b.driveLabel || "Voir les originaux"} &#8599;
+        </a>
+      )}
+    </div>
+  );
+}
+
 // ─── Gallery ───
 function Gallery({
   title,
@@ -629,21 +683,21 @@ function Gallery({
   const scriptLoaded = useRef(false);
   const cancelDownload = useRef(false);
 
-  const proCount = photos.filter((p) => p.isPro).length;
   const counts: Record<PhotoFilter, number> = {
     all: photos.length,
-    guests: photos.length - proCount,
-    pro: proCount,
+    guests: photos.filter((p) => p.source === "guests").length,
+    pro: photos.filter((p) => p.source === "pro").length,
+    booth: photos.filter((p) => p.source === "booth").length,
   };
 
   const filteredPhotos = useMemo(() => {
     if (filter === "all") return photos;
-    const subset = photos.filter((p) => (filter === "pro" ? p.isPro : !p.isPro));
-    if (filter !== "pro") return subset;
-    // Les photos de la photographe sont numerotees dans l'ordre de la journee
-    // ("…-100", "…-101"…). Comme elles sont toutes envoyees en une fois, leur
-    // date d'upload ne distingue rien : on trie sur ce numero pour retrouver
-    // le deroule du mariage. Le tri numerique evite que "-99" passe apres "-100".
+    const subset = photos.filter((p) => p.source === filter);
+    if (filter === "guests") return subset;
+    // Les lots de la photographe et du photobooth sont numerotes dans l'ordre
+    // de la journee ("…-100", "IMG_1121"…). Comme chaque lot est envoye en une
+    // fois, la date d'upload ne distingue rien : on trie sur ce numero pour
+    // retrouver le deroule. Le tri numerique evite que "-99" passe apres "-100".
     return [...subset].sort((a, b) =>
       a.public_id.localeCompare(b.public_id, "fr", { numeric: true })
     );
@@ -687,32 +741,38 @@ function Gallery({
           .then((r) => (r.ok ? r.json() : { resources: [] }))
           .catch(() => ({ resources: [] }));
 
-      const [imgRes, vidRes, proImgRes, proVidRes] = await Promise.all([
-        fetchList("image", TAG),
-        fetchList("video", TAG),
-        fetchList("image", PRO_TAG),
-        fetchList("video", PRO_TAG),
-      ]);
+      const [imgRes, vidRes, proImgRes, proVidRes, boothImgRes, boothVidRes] =
+        await Promise.all([
+          fetchList("image", TAG),
+          fetchList("video", TAG),
+          fetchList("image", PRO_TAG),
+          fetchList("video", PRO_TAG),
+          fetchList("image", BOOTH_TAG),
+          fetchList("video", BOOTH_TAG),
+        ]);
 
-      const proIds: Record<MediaType, Set<string>> = {
-        image: new Set((proImgRes.resources || []).map((r) => r.public_id)),
-        video: new Set((proVidRes.resources || []).map((r) => r.public_id)),
-      };
-
-      // Fusion des listes "mariage" et "photographe" (une photo pro peut
-      // porter les deux tags), dedoublonnee par type + public_id.
+      // Fusion des trois listes, dedoublonnee par type + public_id : une photo
+      // peut porter plusieurs tags, la premiere origine rencontree l'emporte.
+      // On collecte donc les lots identifies avant la liste "mariage", pour
+      // qu'une photo taguee deux fois garde son origine reelle.
       const byKey = new Map<string, CloudinaryResource>();
-      const collect = (resources: CloudinaryRawResource[] | undefined, media: MediaType) => {
+      const collect = (
+        resources: CloudinaryRawResource[] | undefined,
+        media: MediaType,
+        source: PhotoSource
+      ) => {
         (resources || []).forEach((r) => {
           const key = `${media}:${r.public_id}`;
           if (byKey.has(key)) return;
-          byKey.set(key, { ...r, media, isPro: proIds[media].has(r.public_id) });
+          byKey.set(key, { ...r, media, source });
         });
       };
-      collect(imgRes.resources, "image");
-      collect(proImgRes.resources, "image");
-      collect(vidRes.resources, "video");
-      collect(proVidRes.resources, "video");
+      collect(proImgRes.resources, "image", "pro");
+      collect(proVidRes.resources, "video", "pro");
+      collect(boothImgRes.resources, "image", "booth");
+      collect(boothVidRes.resources, "video", "booth");
+      collect(imgRes.resources, "image", "guests");
+      collect(vidRes.resources, "video", "guests");
 
       const all = Array.from(byKey.values()).sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -1024,6 +1084,9 @@ function Gallery({
       {/* Carte photographe : page dediee, ou des qu'on filtre sur ses photos */}
       {photographerCardVisible && <PhotographerCard />}
 
+      {/* Carte photobooth : lien vers les originaux, quand on filtre dessus */}
+      {filter === "booth" && <BoothCard />}
+
       {/* Filtre par tag : toutes / invites / photographe */}
       {showFilters && (
         <div style={s.filterBar}>
@@ -1044,7 +1107,9 @@ function Gallery({
               </button>
             ))}
           </div>
-          {!photographerCardVisible && photographerPageUrl && (
+          {/* Une seule mise en avant a la fois : pas le lien photographe
+              quand la carte photobooth occupe deja le haut de page. */}
+          {!photographerCardVisible && filter !== "booth" && photographerPageUrl && (
             <a href={photographerPageUrl} style={s.proLink}>
               À propos de la photographe + lien vers les photos haute définition &#8250;
             </a>
@@ -1101,6 +1166,8 @@ function Gallery({
             ? "Aucune photo pour le moment. Soyez le premier a en ajouter !"
             : filter === "pro"
             ? "Les photos de la photographe arrivent bientôt."
+            : filter === "booth"
+            ? "Les photos du photobooth arrivent bientôt."
             : "Aucune photo dans cette sélection."}
         </p>
       )}
@@ -1131,8 +1198,10 @@ function Gallery({
                   {pm && pm.comments > 0 && <span>&#128172; {pm.comments}</span>}
                 </div>
               )}
-              {!selectMode && photo.isPro && filter === "all" && (
-                <div style={s.proBadge} title="Photo de la photographe">&#128247;</div>
+              {!selectMode && filter === "all" && SOURCE_BADGE[photo.source] && (
+                <div style={s.proBadge} title={SOURCE_BADGE[photo.source]!.title}>
+                  {SOURCE_BADGE[photo.source]!.icon}
+                </div>
               )}
               {selectMode && (
                 <div style={{
@@ -1208,9 +1277,9 @@ function Gallery({
 export interface PhotoGalleryProps {
   /** Titre affiche en haut de la galerie. */
   title?: string;
-  /** Filtre selectionne a l'ouverture ("all" | "guests" | "pro"). */
+  /** Filtre selectionne a l'ouverture ("all" | "guests" | "pro" | "booth"). */
   defaultFilter?: PhotoFilter;
-  /** Affiche les puces de filtre Toutes / Invites / Photographe. */
+  /** Affiche les puces de filtre Toutes / Invites / Photographe / Photobooth. */
   showFilters?: boolean;
   /** Affiche le bloc coordonnees + lien Jingoo de la photographe. */
   showPhotographerCard?: boolean;

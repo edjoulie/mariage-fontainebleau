@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 #
-# Prepare (et, en option, envoie) les photos de la photographe vers Cloudinary.
+# Prepare (et, en option, envoie) un lot de photos vers Cloudinary : celles de
+# la photographe, celles du photobooth, ou tout autre lot a venir.
 #
 # Pourquoi ce script : Cloudinary plafonne les images a 10 Mo sur le plan
-# gratuit, or les fichiers d'Aline Ruze montent a 33 Mo (8192x5464). On reduit
-# donc chaque photo avant l'envoi. 2560 px sur le plus grand cote reste
-# largement au-dessus de ce que le site affiche (1600 px max) et suffit pour
-# un tirage 20x30 ; la vraie haute definition reste chez la photographe, ce qui
-# est precisement l'objet du lien vers sa galerie.
+# gratuit, or les fichiers d'Aline Ruze montent a 33 Mo (8192x5464) et ceux du
+# photobooth a 9 Mo. On reduit donc chaque photo avant l'envoi. 2560 px sur le
+# plus grand cote reste largement au-dessus de ce que le site affiche (1600 px
+# max) et suffit pour un tirage 20x30 ; la vraie haute definition reste a la
+# source (galerie de la photographe, Drive du DJ), ce qui est precisement
+# l'objet des liens affiches dans la galerie.
 #
-# Le tag applique est UNIQUEMENT "photographe", pas "mariage" : l'endpoint
-# public list/{tag}.json est plafonne a 1000 ressources et le tag "mariage" en
-# compte deja ~320. La galerie fusionne les deux listes, donc la vue "Toutes"
-# reste complete.
+# Le tag applique est UNIQUEMENT celui du lot ("photographe", "photobooth"...),
+# jamais "mariage" : l'endpoint public list/{tag}.json est plafonne a 1000
+# ressources et le tag "mariage" en compte deja ~306. La galerie fusionne les
+# listes, donc la vue "Toutes" reste complete sans qu'aucune n'approche la
+# limite.
 #
 # Usage :
 #   ./scripts/prepare-photos.sh ~/Downloads/c6498033
 #   ./scripts/prepare-photos.sh ~/Downloads/c6498033 --upload
+#
+#   UPLOAD_TAGS=photobooth PUBLIC_ID_PREFIX=photobooth/ \
+#     ./scripts/prepare-photos.sh ~/Downloads/Photobooth --upload
 #
 # Sans --upload : aucune donnee ne quitte la machine, on ne fait que fabriquer
 # les fichiers reduits pour que vous puissiez les verifier.
@@ -30,6 +36,11 @@ set -euo pipefail
 CLOUD_NAME="${CLOUD_NAME:-dxvypw2kn}"
 UPLOAD_PRESET="${UPLOAD_PRESET:-mariage}"
 UPLOAD_TAGS="${UPLOAD_TAGS:-photographe}"
+# Prefixe ajoute devant le public_id. Termine par "/" il range les photos dans
+# un dossier Cloudinary : c'est ce qu'on veut pour le photobooth, dont les noms
+# ("IMG_1120") sont trop generiques pour vivre a la racine a cote des photos
+# des invites. La galerie n'affiche que le dernier segment en legende.
+PUBLIC_ID_PREFIX="${PUBLIC_ID_PREFIX:-}"
 
 MAX_EDGE="${MAX_EDGE:-2560}"      # px sur le plus grand cote
 QUALITY="${QUALITY:-86}"          # qualite JPEG cible
@@ -178,6 +189,7 @@ fi
 
 echo
 echo "→ Envoi vers Cloudinary « $CLOUD_NAME », preset « $UPLOAD_PRESET », tags « $UPLOAD_TAGS »"
+[ -n "$PUBLIC_ID_PREFIX" ] && echo "  public_id prefixe par « $PUBLIC_ID_PREFIX »"
 n=0; sent=0; skipped=0; fail=0
 for f in "$OUT"/*.jpg; do
   n=$((n + 1))
@@ -194,7 +206,7 @@ for f in "$OUT"/*.jpg; do
     -X POST "https://api.cloudinary.com/v1_1/$CLOUD_NAME/image/upload" \
     -F "file=@$f" \
     -F "upload_preset=$UPLOAD_PRESET" \
-    -F "public_id=${name%.jpg}" \
+    -F "public_id=${PUBLIC_ID_PREFIX}${name%.jpg}" \
     -F "tags=$UPLOAD_TAGS" 2>&1) || true
   if [[ "$resp" == *'"public_id"'* ]]; then
     echo "$name" >> "$UPLOADED_LOG"
@@ -215,4 +227,4 @@ done
 
 echo
 echo "✓ $sent envoyee(s), $skipped deja presente(s), $fail echec(s)."
-echo "  Elles apparaissent dans la galerie sous le filtre « Photographe »."
+echo "  Elles apparaissent dans la galerie sous le filtre correspondant au tag « $UPLOAD_TAGS »."
