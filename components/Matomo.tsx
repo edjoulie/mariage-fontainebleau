@@ -89,7 +89,11 @@ export default function Matomo() {
           // leur imposer. Le comptage des visiteurs uniques est approche, ce qui
           // suffit largement ici.
           _paq.push(['disableCookies']);
-          _paq.push(['setDoNotTrack', true]);
+          // Le signal Do Not Track n'est volontairement pas honore : Firefox
+          // l'active par defaut en protection stricte, et une part inconnue
+          // des invites serait invisible, ce qui viderait le chiffre de sens.
+          // La mesure restant sans cookie et sans donnee personnelle, il n'y a
+          // rien a refuser.
           _paq.push(['setCustomUrl', (function() {
             try {
               var p = new URL(location.href);
