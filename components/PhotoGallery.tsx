@@ -49,6 +49,9 @@ const FILTERS: { key: PhotoFilter; label: string }[] = [
   { key: "pro", label: "📷 Photographe" },
   { key: "booth", label: "📸 Photobooth" },
 ];
+// Ordre des lots dans la vue "Toutes" : la photographe a couvert la journee
+// entiere, les invites viennent ensuite, le photobooth ferme la soiree.
+const SOURCE_ORDER: PhotoSource[] = ["pro", "guests", "booth"];
 // Pastille discrete sur les vignettes en vue "Toutes", pour situer l'origine.
 const SOURCE_BADGE: Record<PhotoSource, { icon: string; title: string } | null> = {
   guests: null,
@@ -194,6 +197,19 @@ function saveBlob(blob: Blob, filename: string): void {
 // Nom lisible derive du public_id (retire le dossier et nettoie le nom de fichier)
 function displayName(publicId: string): string {
   return publicId.split("/").pop() || publicId;
+}
+
+// Ordre d'un lot, du debut a la fin de la journee.
+// Les lots de la photographe et du photobooth sont numerotes dans l'ordre des
+// prises de vue ("…-100", "IMG_1121"…) ; comme chaque lot est envoye en une
+// fois, la date d'upload ne distingue rien et on trie sur ce numero. Le tri
+// numerique evite que "-99" passe apres "-100". Les photos des invites, elles,
+// arrivent une par une : leur date d'envoi est la seule chronologie qu'on ait.
+function compareWithinSource(a: CloudinaryResource, b: CloudinaryResource): number {
+  if (a.source === "guests") {
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  }
+  return a.public_id.localeCompare(b.public_id, "fr", { numeric: true });
 }
 
 // Cle de selection : une image et une video peuvent partager le meme public_id.
@@ -691,16 +707,20 @@ function Gallery({
   };
 
   const filteredPhotos = useMemo(() => {
-    if (filter === "all") return photos;
+    // Vue "Toutes" : les trois lots se suivent, chacun dans l'ordre de la
+    // journee. On ne melange pas par date d'upload, qui remonterait le dernier
+    // lot envoye en tete et casserait le deroule.
+    if (filter === "all") {
+      return [...photos].sort((a, b) => {
+        const rank = SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source);
+        return rank !== 0 ? rank : compareWithinSource(a, b);
+      });
+    }
     const subset = photos.filter((p) => p.source === filter);
+    // Les photos des invites gardent l'ordre de `photos`, le plus recent en
+    // tete : c'est ce filtre qu'on ouvre juste apres avoir envoye une photo.
     if (filter === "guests") return subset;
-    // Les lots de la photographe et du photobooth sont numerotes dans l'ordre
-    // de la journee ("…-100", "IMG_1121"…). Comme chaque lot est envoye en une
-    // fois, la date d'upload ne distingue rien : on trie sur ce numero pour
-    // retrouver le deroule. Le tri numerique evite que "-99" passe apres "-100".
-    return [...subset].sort((a, b) =>
-      a.public_id.localeCompare(b.public_id, "fr", { numeric: true })
-    );
+    return [...subset].sort(compareWithinSource);
   }, [photos, filter]);
 
   // La carte de la photographe s'affiche aussi des qu'on filtre sur ses photos :
