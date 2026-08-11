@@ -52,20 +52,31 @@ export default function Matomo() {
     if (!ENABLED) return;
     previousUrl.current = trackedUrl(window.location.href);
 
-    const handleRouteChange = () => {
+    const track = () => {
       const url = trackedUrl(window.location.href);
       const _paq = (window._paq = window._paq || []);
       if (previousUrl.current) _paq.push(["setReferrerUrl", previousUrl.current]);
       _paq.push(["setCustomUrl", url]);
-      // Le titre est pose par next/head au rendu : on laisse passer un tick
-      // pour ne pas enregistrer celui de la page qu'on vient de quitter.
       _paq.push(["setDocumentTitle", document.title]);
       _paq.push(["trackPageView"]);
       _paq.push(["enableLinkTracking"]);
       previousUrl.current = url;
     };
 
-    const onComplete = () => setTimeout(handleRouteChange, 0);
+    // next/head pose le titre apres le rendu, plusieurs ticks apres l'evenement
+    // de navigation : declarer la page tout de suite enregistrait le titre de
+    // celle qu'on venait de quitter. On attend donc qu'il change, sans depasser
+    // une seconde — deux pages peuvent porter le meme titre.
+    const onComplete = () => {
+      const before = document.title;
+      const started = Date.now();
+      const waitForTitle = () => {
+        if (document.title !== before || Date.now() - started > 1000) track();
+        else setTimeout(waitForTitle, 50);
+      };
+      setTimeout(waitForTitle, 50);
+    };
+
     router.events.on("routeChangeComplete", onComplete);
     return () => router.events.off("routeChangeComplete", onComplete);
   }, [router.events]);
