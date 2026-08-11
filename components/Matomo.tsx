@@ -10,8 +10,10 @@ import { useRouter } from "next/router";
 // Tant que l'identifiant est vide, rien n'est charge : pas de script, pas de
 // requete, aucune trace. C'est aussi ce qui evite de mesurer localhost.
 // ─────────────────────────────────────────────────────────────────
+// Le type `string` est explicite : sans lui, TypeScript reduit la constante a
+// son littéral et refuse de la comparer a "" plus bas.
 const MATOMO_URL = "https://matomo.albia.lhib.io/";
-const MATOMO_SITE_ID = "4";
+const MATOMO_SITE_ID: string = "4";
 
 // Le site n'est mesure qu'en production : en developpement, chaque
 // rechargement gonflerait les statistiques.
