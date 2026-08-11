@@ -76,25 +76,29 @@ export default function Matomo() {
     <Script id="matomo" strategy="afterInteractive">
       {`
         var _paq = window._paq = window._paq || [];
-        // Mesure sans cookie et avec IP anonymisee : pas d'identifiant depose
-        // sur l'appareil des invites, donc pas de banniere de consentement a
-        // leur imposer. Le comptage des visiteurs uniques est approche, ce qui
-        // suffit largement ici.
-        _paq.push(['disableCookies']);
-        _paq.push(['setDoNotTrack', true]);
-        _paq.push(['setCustomUrl', (function() {
-          try {
-            var u = new URL(location.href);
-            ${JSON.stringify(SENSITIVE_PARAMS)}.forEach(function(p) { u.searchParams.delete(p); });
-            return u.toString();
-          } catch (e) { return location.href; }
-        })()]);
-        _paq.push(['trackPageView']);
-        _paq.push(['enableLinkTracking']);
         (function() {
           var u = ${JSON.stringify(MATOMO_URL)};
+          // Le site est declare avant la premiere mesure. Le snippet officiel
+          // pousse 'trackPageView' d'abord et 'setSiteId' ensuite ; l'ordre
+          // inverse ne coute rien et evite qu'une requete parte sans idsite,
+          // ce que le serveur rejetterait en 400.
           _paq.push(['setTrackerUrl', u + 'matomo.php']);
           _paq.push(['setSiteId', ${JSON.stringify(MATOMO_SITE_ID)}]);
+          // Mesure sans cookie et avec IP anonymisee : pas d'identifiant depose
+          // sur l'appareil des invites, donc pas de banniere de consentement a
+          // leur imposer. Le comptage des visiteurs uniques est approche, ce qui
+          // suffit largement ici.
+          _paq.push(['disableCookies']);
+          _paq.push(['setDoNotTrack', true]);
+          _paq.push(['setCustomUrl', (function() {
+            try {
+              var p = new URL(location.href);
+              ${JSON.stringify(SENSITIVE_PARAMS)}.forEach(function(k) { p.searchParams.delete(k); });
+              return p.toString();
+            } catch (e) { return location.href; }
+          })()]);
+          _paq.push(['trackPageView']);
+          _paq.push(['enableLinkTracking']);
           var d = document, g = d.createElement('script'), s = d.getElementsByTagName('script')[0];
           g.async = true; g.src = u + 'matomo.js'; s.parentNode.insertBefore(g, s);
         })();
